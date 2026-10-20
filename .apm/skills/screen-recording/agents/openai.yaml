@@ -1,0 +1,4 @@
+interface:
+  display_name: "Screen Recording"
+  short_description: "Record UI flows with eased cursors and click effects"
+  default_prompt: "Use $screen-recording to record this UI flow at 60 fps with step labels, the bundled cursor, and click effects."

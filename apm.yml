@@ -1,0 +1,10 @@
+name: lemonneko-skills
+version: 1.0.0
+description: Reusable agent skills by LemonNeko
+author: LemonNeko
+license: MIT
+includes: auto
+dependencies:
+  apm: []
+  mcp: []
+scripts: {}
