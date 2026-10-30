@@ -37,6 +37,24 @@ Use fresh observed selectors. The helper scrolls the target into view, measures 
 It calculates the shared distance-based duration and schedules about 60 movement steps per second.
 Use it for each recorded click; `hover` performs the same approach without clicking.
 
+Use `scroll` for recorded scrolling. It sends small eased increments instead of
+one abrupt jump. With no target it sends wheel input under the current pointer.
+Pass a visible scroll-container selector to move the pointer there and scroll
+that container directly; this is the reliable path for Electron CDP:
+
+```sh
+node "$skill_dir/scripts/present.mjs" scroll --session "$session" \
+  --selector '[data-testid="conversation"]' --delta-y 720
+node "$skill_dir/scripts/present.mjs" scroll --session "$session" \
+  --delta-y=-420 --duration-ms 650
+```
+
+Positive `--delta-y` scrolls down; positive `--delta-x` scrolls right. The
+default duration scales from 450 to 1200 ms with the requested distance. Keep
+the pointer over the intended region, let the scroll settle before the next
+click, and verify the resulting content position. Do not replace it with one
+large `agent-browser scroll` or `mouse wheel` event in a polished take.
+
 For long-press and hold-to-confirm controls, use `press`. It approaches like
 `click`, checks that no other element covers the target, then holds the primary
 button for `--hold-ms` (default 1000):
@@ -83,7 +101,7 @@ rest. `move`, `hover`, `press`, and `type` also accept `--x/--y`.
 
 `step --hold-ms` (default 1000) keeps a label on screen long enough to read; use
 `--hold-ms 0` for rapid-fire labels.
-Use normal agent-browser commands for typing, scrolling, assertions, and other input.
+Use normal agent-browser commands for assertions and other input.
 The helper operates on top-document coordinates; return to the top frame before using it. Use an appropriate verified coordinate path for iframe targets rather than passing frame-local coordinates as top-level positions.
 
 The overlay uses an expanding orange ring and cursor scaling `1 → 0.86 → 1.055 → 1` over 370 ms.

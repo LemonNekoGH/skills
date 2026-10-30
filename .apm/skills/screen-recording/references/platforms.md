@@ -18,6 +18,12 @@ In auv 0.0.20, native drivers target macOS, Windows, and Linux. Android and iOS 
 Use auv to operate an interactive emulator or mirroring window when that host path works.
 If it cannot perform the required action, use an available platform controller and record why.
 Browser interaction still uses agent-browser, including browser flows displayed on a desktop.
+For Electron renderers, launch with a remote debugging port and use
+agent-browser's Electron workflow. This also enables the live presentation and
+eased container scrolling from `scripts/present.mjs`; pass the visible
+scroll-container selector because CDP wheel events can be ineffective in an
+Electron target. Keep auv for native chrome such as menus or dialogs that CDP
+cannot reach.
 
 `--device-id` selects an auv desktop daemon, not an Android serial or iOS UDID.
 Inspect `display.list`, `window.list`, captures, or UI information before input. For example:
@@ -35,6 +41,12 @@ These move coordinates are logical screen coordinates. Respect the capture's sca
 Recheck a target that moves during an approach. Assert that input reached the intended application.
 
 `input.moveMouse` has no duration flag in this version. Do not invent one.
+It also has no scroll operation. Do not simulate polished scrolling with a
+single Page Down key. For Electron, use the agent-browser path above. For other
+native apps, use a controller that exposes repeated wheel events and distribute
+the total delta with cubic ease-in-out over 450-1200 ms at about 60 updates per
+second. If no such controller is available, avoid staging a fake scroll and
+report the control limitation.
 For smooth live motion, use supported timed intermediate moves through an available runner/API and measure the result.
 Otherwise, reserve the calculated pre-click interval and render the presentation cursor from its recorded timeline afterward.
 `overlay.cursor` and `overlay.status` are presentation APIs, not input; availability and easing differ by backend. Check their current help before use.

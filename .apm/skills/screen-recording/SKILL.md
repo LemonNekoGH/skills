@@ -50,8 +50,8 @@ A recording shows a result; it should not outlast the job. Aim for well under
 
 ## Choose the workflow
 
-- Browsers: [Browser workflow](references/browser.md). Live overlay plus
-  agent-browser input and the built-in recorder.
+- Browsers and Electron renderers: [Browser workflow](references/browser.md).
+  Live overlay plus agent-browser input and the built-in recorder.
 - Native apps, simulators, and physical devices:
   [Platform control and capture](references/platforms.md).
 - Post-composited presentation without a live browser overlay:
@@ -85,6 +85,12 @@ Pointer travel time comes from distance:
 Use about 60 movement updates per second, finish the approach before the click,
 and center the ring on the real input position. Keep labels clear of the
 controls under test. Use one pointer/effect layer.
+
+For scrolling, send repeated small scroll input with cubic ease-in-out rather
+than one large wheel event or a Page Down jump. Use `present.mjs scroll` for
+browser and Electron renderer takes. Pass a container selector for Electron.
+Keep the pointer over the intended scroll region, let the motion settle before
+the next action, and verify the final content position.
 
 ## Verify and deliver
 

@@ -19,6 +19,8 @@ Usage:
                   [--hold-ms 1000]
   present.mjs type  --session NAME (--selector "@e3" | --x N --y N)
                   --text "value" [--delay-ms 150] [--clear]
+  present.mjs scroll --session NAME [--selector "@e3" | --x N --y N]
+                  [--delta-x=N] [--delta-y=N] [--duration-ms 700]
 
 init writes a script for agent-browser --init-script FILE on a fresh session.
 The default cursor is the packaged assets/cursor.png. Hotspots use displayed
@@ -43,6 +45,13 @@ type clicks into the field like a person, then sends one real keystroke every
 shows each key beside the field, except in password fields. The output reports
 the character count and timing, never the typed text. Keep selector references fresh with
 agent-browser snapshot -i. For subframes, switch back to the top frame first.
+
+scroll keeps the pointer where it is, or approaches an optional selector/point,
+then sends eased increments at about 60 updates per second. A selector scrolls
+that container directly, which also works in Electron when CDP wheel events do
+not. Positive --delta-y scrolls down and positive --delta-x scrolls right. Its
+default duration scales with distance; override it only to match the UI.
+Use --delta-y=-420 syntax for negative values.
 `;
 
 function numberOption(value, name, minimum, maximum) {
@@ -90,8 +99,8 @@ function validBox(box) {
   return box;
 }
 
-function selectorTarget(session, selector) {
-  browser(session, ['scrollintoview', selector]);
+function selectorTarget(session, selector, scrollIntoView = true) {
+  if (scrollIntoView) browser(session, ['scrollintoview', selector]);
   const box = validBox(browser(session, ['get', 'box', selector]));
   return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), box };
 }
@@ -145,6 +154,51 @@ function approach(session, state, x, y) {
   return { distance: Math.round(distance), duration, steps };
 }
 
+function scrollStep(session, selector, deltaX, deltaY) {
+  if (!selector) {
+    browser(session, ['mouse', 'wheel', String(deltaY), String(deltaX)]);
+    return 1;
+  }
+  let events = 0;
+  if (deltaY) {
+    browser(session, ['scroll', deltaY > 0 ? 'down' : 'up', String(Math.abs(deltaY)), '--selector', selector]);
+    events += 1;
+  }
+  if (deltaX) {
+    browser(session, ['scroll', deltaX > 0 ? 'right' : 'left', String(Math.abs(deltaX)), '--selector', selector]);
+    events += 1;
+  }
+  return events;
+}
+
+async function smoothScroll(session, selector, deltaX, deltaY, duration) {
+  const steps = Math.min(180, Math.ceil(duration * 60 / 1000));
+  const start = performance.now();
+  let sentX = 0;
+  let sentY = 0;
+  let events = 0;
+
+  for (let index = 1; index <= steps; index += 1) {
+    const wait = start + index * duration / steps - performance.now();
+    if (wait > 0) await sleep(wait);
+    const progress = index / steps;
+    const eased = progress < 0.5
+      ? 4 * progress ** 3
+      : 1 - (-2 * progress + 2) ** 3 / 2;
+    const nextX = Math.round(deltaX * eased);
+    const nextY = Math.round(deltaY * eased);
+    const stepX = nextX - sentX;
+    const stepY = nextY - sentY;
+    if (stepX || stepY) {
+      events += scrollStep(session, selector, stepX, stepY);
+    }
+    sentX = nextX;
+    sentY = nextY;
+  }
+
+  return { duration: Math.round(performance.now() - start), steps, events };
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -166,6 +220,9 @@ async function main() {
       selector: { type: 'string' },
       x: { type: 'string' },
       y: { type: 'string' },
+      'delta-x': { type: 'string', default: '0' },
+      'delta-y': { type: 'string', default: '0' },
+      'duration-ms': { type: 'string' },
     },
   });
   if (values.help) {
@@ -173,8 +230,8 @@ async function main() {
     return;
   }
   const [command] = positionals;
-  if (positionals.length !== 1 || !['init', 'step', 'speed', 'move', 'click', 'hover', 'press', 'type'].includes(command)) {
-    throw new Error('Choose init, step, speed, move, click, hover, press, or type. See --help.');
+  if (positionals.length !== 1 || !['init', 'step', 'speed', 'move', 'click', 'hover', 'press', 'type', 'scroll'].includes(command)) {
+    throw new Error('Choose init, step, speed, move, click, hover, press, type, or scroll. See --help.');
   }
   if (command === 'init') {
     if (!values.out) throw new Error('init requires --out FILE');
@@ -227,6 +284,44 @@ async function main() {
   }
   const hasSelector = values.selector !== undefined;
   const hasPoint = values.x !== undefined || values.y !== undefined;
+  if (command === 'scroll') {
+    if (hasSelector && hasPoint) throw new Error('scroll accepts at most one of --selector or --x/--y');
+    let target;
+    let motion;
+    if (hasSelector) {
+      target = selectorTarget(session, values.selector, false);
+      motion = approach(session, state, target.x, target.y);
+    } else if (hasPoint) {
+      if (values.x === undefined || values.y === undefined) throw new Error('coordinate targets need both --x and --y');
+      target = {
+        x: Math.round(numberOption(values.x, '--x', 0, 100000)),
+        y: Math.round(numberOption(values.y, '--y', 0, 100000)),
+      };
+      motion = approach(session, state, target.x, target.y);
+    }
+    const deltaX = Number(values['delta-x']);
+    const deltaY = Number(values['delta-y']);
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY) || (!deltaX && !deltaY)) {
+      throw new Error('scroll needs a non-zero finite --delta-x or --delta-y');
+    }
+    const distance = Math.hypot(deltaX, deltaY);
+    const defaultDuration = Math.round(Math.min(1200, Math.max(450, 300 + 14 * Math.sqrt(distance))));
+    const duration = values['duration-ms'] === undefined
+      ? defaultDuration
+      : numberOption(values['duration-ms'], '--duration-ms', 120, 3000);
+    const scroll = await smoothScroll(session, values.selector, deltaX, deltaY, duration);
+    console.log(JSON.stringify({
+      action: command,
+      selector: values.selector ?? null,
+      x: target?.x ?? state.x,
+      y: target?.y ?? state.y,
+      deltaX,
+      deltaY,
+      scroll,
+      motion,
+    }));
+    return;
+  }
   if (hasSelector === hasPoint) {
     throw new Error(`${command} needs exactly one of --selector or --x/--y`);
   }
