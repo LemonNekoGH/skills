@@ -37,10 +37,11 @@ Use fresh observed selectors. The helper scrolls the target into view, measures 
 It calculates the shared distance-based duration and schedules about 60 movement steps per second.
 Use it for each recorded click; `hover` performs the same approach without clicking.
 
-Use `scroll` for recorded scrolling. It sends small eased increments instead of
-one abrupt jump. With no target it sends wheel input under the current pointer.
-Pass a visible scroll-container selector to move the pointer there and scroll
-that container directly; this is the reliable path for Electron CDP:
+Use `scroll` for recorded scrolling. With no selector it sends real wheel input
+over one agent-browser stream connection. Pass a visible scroll-container
+selector to animate that container directly on browser animation frames; this
+is the reliable path for Electron CDP. Both paths use elapsed time, so delayed
+updates do not accumulate into a longer gesture:
 
 ```sh
 node "$skill_dir/scripts/present.mjs" scroll --session "$session" \
@@ -54,6 +55,17 @@ default duration scales from 450 to 1200 ms with the requested distance. Keep
 the pointer over the intended region, let the scroll settle before the next
 click, and verify the resulting content position. Do not replace it with one
 large `agent-browser scroll` or `mouse wheel` event in a polished take.
+
+The reported `scroll.duration` excludes pointer travel and setup. Container
+results include the actual `deltaX` and `deltaY`, which can be smaller at an
+edge. Wheel results report input dispatch; check the application's response.
+If nested containers share a snapshot reference's box, use a CSS selector to
+identify the intended container; the helper refuses an ambiguous match.
+The wheel path needs Node.js 22.15+ and an enabled session stream (`agent-browser
+stream enable`). Do not start a separate CLI process for each animation step.
+
+The scheduling follows the browser's [animation-frame timestamp](https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame)
+and agent-browser's [stream input protocol](https://agent-browser.dev/streaming#input-injection).
 
 For long-press and hold-to-confirm controls, use `press`. It approaches like
 `click`, checks that no other element covers the target, then holds the primary

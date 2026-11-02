@@ -36,7 +36,7 @@ Pass `--cursor /path/to/cursor.png` to `present.mjs init` or `render-recording.m
 
 Install the tools for your recording workflow:
 
-- Node.js 20 or later for the helpers and compositor.
+- Node.js 22.15 or later for the helpers and compositor (wheel scrolling uses the built-in WebSocket client).
 - FFmpeg and ffprobe for video processing and verification.
 - [agent-browser](https://agent-browser.dev/) for browser control and capture.
 - [auv](https://github.com/moeru-ai/auv) for native app control where supported, or another available platform controller.
@@ -58,6 +58,12 @@ Run the compositor tests with Node.js and FFmpeg/ffprobe installed:
 
 ```sh
 node --test tests/render-recording.test.mjs
+```
+
+Run the scrolling regression tests with agent-browser and its Chrome browser installed:
+
+```sh
+node --test tests/present-scroll.test.mjs
 ```
 
 ## License

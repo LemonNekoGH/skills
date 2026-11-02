@@ -89,6 +89,8 @@ controls under test. Use one pointer/effect layer.
 For scrolling, send repeated small scroll input with cubic ease-in-out rather
 than one large wheel event or a Page Down jump. Use `present.mjs scroll` for
 browser and Electron renderer takes. Pass a container selector for Electron.
+The helper animates containers in the page and sends wheel input through one
+persistent connection; never launch a CLI command for each animation frame.
 Keep the pointer over the intended scroll region, let the motion settle before
 the next action, and verify the final content position.
 

@@ -47,9 +47,11 @@ the character count and timing, never the typed text. Keep selector references f
 agent-browser snapshot -i. For subframes, switch back to the top frame first.
 
 scroll keeps the pointer where it is, or approaches an optional selector/point,
-then sends eased increments at about 60 updates per second. A selector scrolls
-that container directly, which also works in Electron when CDP wheel events do
-not. Positive --delta-y scrolls down and positive --delta-x scrolls right. Its
+then animates using elapsed time. A selector scrolls that container directly
+on browser animation frames, which also works in Electron when CDP wheel events
+do not. Without a selector, one agent-browser stream connection sends real
+wheel input at about 60 updates per second (Node.js 22.15+).
+Positive --delta-y scrolls down and positive --delta-x scrolls right. Its
 default duration scales with distance; override it only to match the UI.
 Use --delta-y=-420 syntax for negative values.
 `;
@@ -154,49 +156,108 @@ function approach(session, state, x, y) {
   return { distance: Math.round(distance), duration, steps };
 }
 
-function scrollStep(session, selector, deltaX, deltaY) {
-  if (!selector) {
-    browser(session, ['mouse', 'wheel', String(deltaY), String(deltaX)]);
-    return 1;
+// Runs entirely in the page: no process or CDP roundtrip between frames.
+function animateContainerScroll(selector, box, deltaX, deltaY, duration) {
+  let element;
+  if (/^@?e\d+$/.test(selector)) {
+    // Snapshot refs belong to agent-browser. Its measured box identifies the
+    // scrollable ancestor under the pointer without treating a ref as CSS.
+    for (let candidate = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      candidate; candidate = candidate.parentElement) {
+      const rect = candidate.getBoundingClientRect();
+      if (['x', 'y', 'width', 'height'].every(key => Math.abs(rect[key] - box[key]) <= 1)
+        && (candidate.scrollHeight > candidate.clientHeight || candidate.scrollWidth > candidate.clientWidth)) {
+        if (element) throw new Error('Scroll target is ambiguous; use a CSS selector for the intended container.');
+        element = candidate;
+      }
+    }
+  } else {
+    element = document.querySelector(selector);
   }
+  if (!element) throw new Error('Scroll container missing; inspect the page and use a fresh selector.');
+  const startX = element.scrollLeft;
+  const startY = element.scrollTop;
+  const start = performance.now();
+  let steps = 0;
   let events = 0;
-  if (deltaY) {
-    browser(session, ['scroll', deltaY > 0 ? 'down' : 'up', String(Math.abs(deltaY)), '--selector', selector]);
-    events += 1;
-  }
-  if (deltaX) {
-    browser(session, ['scroll', deltaX > 0 ? 'right' : 'left', String(Math.abs(deltaX)), '--selector', selector]);
-    events += 1;
-  }
-  return events;
+  return new Promise((resolve, reject) => {
+    let frame;
+    const timeout = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      reject(new Error('Scroll animation stalled; keep the target tab visible.'));
+    }, duration + 5000);
+    function tick(now) {
+      if (!element.isConnected) {
+        clearTimeout(timeout);
+        reject(new Error('Scroll container was removed during the animation.'));
+        return;
+      }
+      const progress = Math.min(1, Math.max(0, (now - start) / duration));
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+      const beforeX = element.scrollLeft;
+      const beforeY = element.scrollTop;
+      element.scrollTo({ left: startX + deltaX * eased, top: startY + deltaY * eased, behavior: 'instant' });
+      steps++;
+      if (element.scrollLeft !== beforeX || element.scrollTop !== beforeY) events++;
+      if (progress < 1) frame = requestAnimationFrame(tick);
+      else {
+        clearTimeout(timeout);
+        resolve({ duration: Math.round(performance.now() - start), steps, events,
+          deltaX: element.scrollLeft - startX, deltaY: element.scrollTop - startY });
+      }
+    }
+    frame = requestAnimationFrame(tick);
+  });
 }
 
-async function smoothScroll(session, selector, deltaX, deltaY, duration) {
-  const steps = Math.min(180, Math.ceil(duration * 60 / 1000));
-  const start = performance.now();
-  let sentX = 0;
-  let sentY = 0;
-  let events = 0;
-
-  for (let index = 1; index <= steps; index += 1) {
-    const wait = start + index * duration / steps - performance.now();
-    if (wait > 0) await sleep(wait);
-    const progress = index / steps;
-    const eased = progress < 0.5
-      ? 4 * progress ** 3
-      : 1 - (-2 * progress + 2) ** 3 / 2;
-    const nextX = Math.round(deltaX * eased);
-    const nextY = Math.round(deltaY * eased);
-    const stepX = nextX - sentX;
-    const stepY = nextY - sentY;
-    if (stepX || stepY) {
-      events += scrollStep(session, selector, stepX, stepY);
-    }
-    sentX = nextX;
-    sentY = nextY;
+async function smoothScroll(session, selector, target, deltaX, deltaY, duration) {
+  if (selector) {
+    return evaluate(session, `(${animateContainerScroll.toString()})(${[
+      selector, target.box, deltaX, deltaY, duration,
+    ].map(value => JSON.stringify(value)).join(',')})`);
   }
-
-  return { duration: Math.round(performance.now() - start), steps, events };
+  const stream = browser(session, ['stream', 'status']);
+  if (!stream.enabled || !stream.connected || !stream.port) {
+    throw new Error('Wheel scrolling requires an active agent-browser stream; run stream enable for this session.');
+  }
+  // Ack pacing leaves at most one unused preview frame in flight. This socket
+  // controls input only and does not change the recorder or other stream clients.
+  const socket = new WebSocket(`ws://127.0.0.1:${stream.port}/?pacing=ack&maxFps=1`);
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Timed out connecting to the agent-browser stream.')), 5000);
+      socket.addEventListener('open', () => { clearTimeout(timeout); resolve(); }, { once: true });
+      socket.addEventListener('error', () => { clearTimeout(timeout); reject(new Error('Could not connect to the agent-browser stream.')); }, { once: true });
+    });
+    const start = performance.now();
+    let sentX = 0;
+    let sentY = 0;
+    let steps = 0;
+    let events = 0;
+    for (;;) {
+      const elapsed = performance.now() - start;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+      const nextX = Math.round(deltaX * eased);
+      const nextY = Math.round(deltaY * eased);
+      if (socket.readyState !== WebSocket.OPEN) throw new Error('Agent-browser stream disconnected during scrolling.');
+      if (nextX !== sentX || nextY !== sentY) {
+        socket.send(JSON.stringify({ type: 'input_mouse', eventType: 'mouseWheel',
+          x: target.x, y: target.y, deltaX: nextX - sentX, deltaY: nextY - sentY }));
+        events++;
+      }
+      sentX = nextX;
+      sentY = nextY;
+      steps++;
+      if (progress === 1) break;
+      // Skip missed ticks instead of replaying a backlog when the host is busy.
+      const nextTick = Math.min(duration, (Math.floor(elapsed / (1000 / 60)) + 1) * (1000 / 60));
+      await sleep(Math.max(0, start + nextTick - performance.now()));
+    }
+    return { duration: Math.round(performance.now() - start), steps, events };
+  } finally {
+    socket.close();
+  }
 }
 
 async function main() {
@@ -309,7 +370,7 @@ async function main() {
     const duration = values['duration-ms'] === undefined
       ? defaultDuration
       : numberOption(values['duration-ms'], '--duration-ms', 120, 3000);
-    const scroll = await smoothScroll(session, values.selector, deltaX, deltaY, duration);
+    const scroll = await smoothScroll(session, values.selector, target ?? state, deltaX, deltaY, duration);
     console.log(JSON.stringify({
       action: command,
       selector: values.selector ?? null,
