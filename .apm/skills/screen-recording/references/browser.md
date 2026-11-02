@@ -126,8 +126,13 @@ After full navigation, restore the label and pointer anchor.
 
 The built-in page recorder is the default for browser recordings: it captures
 the page itself, including the live overlay. It has fixed encoder quality in
-agent-browser 0.38.2, so report that limit. Reserve a headed lossless display
-master for evidence tier, as described in [Capture quality](capture-quality.md).
+agent-browser 0.38.2, so report that limit.
+
+If a moving interval shows capture stutter, use an available native recorder
+for the selected browser or Electron window. Keep agent-browser as the input
+controller and retain the live overlay. Output FPS and animation callback
+counts do not prove smooth captured motion. See [Capture quality](capture-quality.md)
+for cadence checks and native capture options.
 
 ```sh
 agent-browser --session "$session" record start "$recording_dir/take.mp4" --fps 60

@@ -11,7 +11,10 @@ See [Platform control and capture](platforms.md) for platform choices and source
 
 ### Browser recorder limits
 
-The installed agent-browser 0.38.2 recorder captures PNG frames, then encodes them to YUV 4:2:0 video.
+The agent-browser 0.38.2 recorder takes an initial PNG screenshot, then receives PNG frames through Chrome's `Page.startScreencast`.
+At each output tick, it encodes the latest received frame into YUV 4:2:0 video.
+Without a new capture, it repeats the previous frame.
+`--fps` sets the output rate. It does not guarantee that capture rate.
 Its MP4 path uses `libx264` with the `ultrafast` preset and no explicit CRF option.
 Its WebM path uses VP8 with CRF 18 and an 8 Mbps bitrate setting.
 The CLI exposes no lossless or encoder-quality option.
@@ -30,11 +33,23 @@ lossless, and do not substitute a whole-display capture that adds unrelated
 windows and chrome.
 Do not replace the FFmpeg executable, add a shim, or patch agent-browser to override fixed encoder options.
 
-## macOS lossless capture
+## macOS native capture
 
 Select the intended display and frame the target application before capture. For browsers, use a headed session and the presentation overlay.
 For a window-specific capture, use an available ScreenCaptureKit recorder with a window filter.
 AVFoundation captures a display, so arrange the view to exclude unrelated windows and notifications.
+
+For a native window recording, macOS also provides `screencapture`.
+Discover the intended window ID with `auv invoke window.list --json` before recording:
+
+```sh
+/usr/sbin/screencapture -v -l"$window_id" -o -x -V7 "$recording_dir/native.mov"
+```
+
+This records only the selected window for seven seconds without its shadow or capture sounds.
+Keep agent-browser as the input controller and retain the live overlay.
+The command provides no frame-rate or encoder-quality setting. Check its actual stream and motion; do not call its output lossless.
+Keep the original MOV file when you create a compatibility copy.
 
 Enumerate devices instead of guessing an index:
 
@@ -90,19 +105,24 @@ One command confirms the stream and decodes the entire file:
 node "$skill_dir/scripts/verify.mjs" --video "$video" [--receipt "$recording_dir/receipt.json"]
 ```
 
-For the agent-browser built-in recorder, the stop receipt's `frames` and
-`capturedFrames` are the primary cadence signal. The recorder can hold the last
-Chrome frame between repaints, and the whole-clip ratio is misleading because
-deliberate reading pauses contain static frames. A much lower `capturedFrames`
-than `frames` means the application did not paint throughout the take.
-See the [official frame-rate explanation](https://agent-browser.dev/recording).
+For the built-in recorder, `capturedFrames` counts received captures, including
+the initial screenshot. `frames` counts encoded output frames, which can repeat
+the latest capture. A low ratio can reflect static pauses or sparse capture
+delivery. It does not establish that the application failed to paint.
+See the [recorder implementation](https://github.com/vercel-labs/agent-browser/blob/v0.38.2/cli/src/native/recording.rs).
+
+Compare a moving interval with the visible application before attributing
+stutter to rendering. Scroll events and `requestAnimationFrame` callbacks show
+input or animation progress; they do not prove captured visual updates.
+If the page recorder misses motion, use an available native window recorder
+while retaining agent-browser input and the live overlay.
 
 Frame timestamp deltas (`ffprobe -show_frames ... best_effort_timestamp_time`)
 are informational only: the muxer writes them, so they cannot prove that the
 application painted at 60 fps. `verify.mjs --cadence` summarizes them; never
 present them as native-cadence proof.
 
-Evidence tier only: inspect a short interval of sustained cursor movement at
+For evidence tier or suspected capture stutter, inspect sustained cursor movement at
 original resolution. Extract frames without interpolation or rate conversion:
 
 ```sh
