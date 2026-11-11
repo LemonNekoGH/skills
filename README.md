@@ -4,6 +4,7 @@ Reusable agent skills for [Agent Package Manager (APM)](https://github.com/micro
 
 | Skill | Purpose |
 | --- | --- |
+| [deskfleet-ui-showcase](.apm/skills/deskfleet-ui-showcase/SKILL.md) | Launch a deterministic, login-free DeskFleet UI showcase server with preloaded fleet hierarchy and full session snapshots without modifying the DeskFleet repository. |
 | [screen-recording](.apm/skills/screen-recording/SKILL.md) | Record UI flows with an eased cursor, click effects, action labels, and marked wait acceleration. |
 
 ## Install

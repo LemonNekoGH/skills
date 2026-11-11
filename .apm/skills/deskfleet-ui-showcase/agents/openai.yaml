@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeskFleet UI Showcase"
+  short_description: "Launch login-free DeskFleet UI showcase with full session fixtures"
+  default_prompt: "Use $deskfleet-ui-showcase to start the login-free DeskFleet UI showcase server and inspect the session components."
