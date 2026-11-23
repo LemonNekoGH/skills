@@ -21,7 +21,10 @@ const showcaseApi = createDevShowcaseDesktopApi({
 })
 
 Object.defineProperty(window, "deskfleet", {
-  value: showcaseApi,
+  value: {
+    ...showcaseApi,
+    googleTag: { send: async () => {} },
+  },
   configurable: true,
   writable: true,
 })

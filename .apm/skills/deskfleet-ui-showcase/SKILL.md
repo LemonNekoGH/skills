@@ -70,4 +70,4 @@ Open the printed URLs with `agent-browser` or a desktop browser:
 
 ## Protocol maintenance
 
-When DeskFleet's provisional protocol types in `apps/daemon/src/*-protocol.ts` or `packages/client/src/*` add new required fields, update `assets/dev-showcase-fixtures.ts` and `assets/dev-showcase.ts` in this skill directory so future runs stay deterministic.
+When DeskFleet's provisional protocol types in `packages/protocol/src/*` or `packages/client/src/*` add new required fields, update `assets/dev-showcase-fixtures.ts` and `assets/dev-showcase.ts` in this skill directory so future runs stay deterministic.
