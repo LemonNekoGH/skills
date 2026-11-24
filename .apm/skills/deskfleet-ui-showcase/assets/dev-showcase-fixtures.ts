@@ -16,6 +16,7 @@ export const DEV_SHOWCASE_OFFLINE_MACHINE_ID = "machine-lab"
 export const DEV_SHOWCASE_WORKSPACE_ID = "101"
 export const DEV_SHOWCASE_SECONDARY_WORKSPACE_ID = "102"
 export const DEV_SHOWCASE_SESSION_ID = "sess-showcase"
+export const DEV_SHOWCASE_MACHINE_SESSION_ID = "sess-machine-home"
 export const DEV_SHOWCASE_ERROR_SESSION_ID = "sess-error"
 export const DEV_SHOWCASE_ARCHIVED_SESSION_ID = "sess-archived"
 export const DEV_SHOWCASE_REMOTE_SESSION_ID = "sess-remote-build"
@@ -631,7 +632,7 @@ export function createDevShowcaseErrorEvents(snapshot = createDevShowcaseErrorSn
 
 function createCompletedStubSnapshot(options: {
   id: string
-  workspaceId: string
+  workspaceId?: string
   provider: string
   providerSessionId: string
   title: string
@@ -639,13 +640,14 @@ function createCompletedStubSnapshot(options: {
   prompt: string
   createdAt: string
   updatedAt: string
+  unread?: boolean
 }): AgentSnapshot {
   const inputId = `input-${options.id}`
   const turnId = `turn-${options.id}`
   const cmdId = `cmd-${options.id}`
   const session: AgentSessionRecord = {
     id: options.id,
-    workspaceId: options.workspaceId,
+    ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     provider: options.provider,
     providerSessionId: options.providerSessionId,
     title: options.title,
@@ -653,9 +655,9 @@ function createCompletedStubSnapshot(options: {
     lifecycle: "ready",
     archiveState: options.archiveState,
     capabilities: { steering: true, resume: true, fork: true, additionalDirectories: true },
-    lastEventSeq: "0",
-    lastCompletedSeq: "0",
-    lastReadSeq: "0",
+    lastEventSeq: options.unread ? "2" : "0",
+    lastCompletedSeq: options.unread ? "2" : "0",
+    lastReadSeq: options.unread ? "1" : "0",
     createdAt: options.createdAt,
     updatedAt: options.updatedAt,
   }
@@ -686,6 +688,20 @@ function createCompletedStubSnapshot(options: {
     stopReason: "end_turn",
   }
   return { session, runs: [], inputs: [input], turns: [turn], permissions: [], elicitations: [] }
+}
+
+export function createDevShowcaseMachineSnapshot(): AgentSnapshot {
+  return createCompletedStubSnapshot({
+    id: DEV_SHOWCASE_MACHINE_SESSION_ID,
+    provider: "claude-code",
+    providerSessionId: "prov-sess-machine-home",
+    title: "Inspect system disk usage & Docker cache",
+    archiveState: "active",
+    prompt: "Check free disk space and list stale Docker build caches on this machine.",
+    createdAt: "2026-04-12T09:40:00.000Z",
+    updatedAt: "2026-04-12T09:46:00.000Z",
+    unread: true,
+  })
 }
 
 export function createDevShowcaseArchivedSnapshot(): AgentSnapshot {
@@ -826,7 +842,7 @@ export const DEV_SHOWCASE_CATALOGS: Record<string, CatalogSnapshot> = {
     teamId: DEV_SHOWCASE_TEAM_ID,
     machineId: DEV_SHOWCASE_LOCAL_MACHINE_ID,
     machineName: "Studio MacBook Pro",
-    sessionIds: [DEV_SHOWCASE_SESSION_ID, DEV_SHOWCASE_ERROR_SESSION_ID, DEV_SHOWCASE_ARCHIVED_SESSION_ID],
+    sessionIds: [DEV_SHOWCASE_SESSION_ID, DEV_SHOWCASE_MACHINE_SESSION_ID, DEV_SHOWCASE_ERROR_SESSION_ID, DEV_SHOWCASE_ARCHIVED_SESSION_ID],
     sessions: [],
     githubBranches: [
       {

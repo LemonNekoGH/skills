@@ -16,6 +16,7 @@ import {
   createDevShowcaseErrorSnapshot,
   createDevShowcaseEvents,
   createDevShowcaseGitDiff,
+  createDevShowcaseMachineSnapshot,
   createDevShowcaseRemoteSnapshot,
   createDevShowcaseSnapshot,
   DEV_SHOWCASE_ACCOUNT,
@@ -29,6 +30,7 @@ import {
   DEV_SHOWCASE_GIT_STATUS,
   DEV_SHOWCASE_LOCAL_ENROLLMENT,
   DEV_SHOWCASE_LOCAL_MACHINE_ID,
+  DEV_SHOWCASE_MACHINE_SESSION_ID,
   DEV_SHOWCASE_MACHINES,
   DEV_SHOWCASE_MEMBERS,
   DEV_SHOWCASE_PROVIDER_SNAPSHOT,
@@ -54,6 +56,7 @@ interface SessionRecordState {
 
 function createInitialSessions(): Map<string, SessionRecordState> {
   const showcaseSnapshot = createDevShowcaseSnapshot()
+  const machineSnapshot = createDevShowcaseMachineSnapshot()
   const errorSnapshot = createDevShowcaseErrorSnapshot()
   const archivedSnapshot = createDevShowcaseArchivedSnapshot()
   const remoteSnapshot = createDevShowcaseRemoteSnapshot()
@@ -62,6 +65,13 @@ function createInitialSessions(): Map<string, SessionRecordState> {
       machineId: DEV_SHOWCASE_LOCAL_MACHINE_ID,
       snapshot: showcaseSnapshot,
       events: createDevShowcaseEvents(showcaseSnapshot),
+      configuration: createDevShowcaseConfiguration("claude-code"),
+      configOptions: structuredClone(DEV_SHOWCASE_CONFIG_OPTIONS),
+    }],
+    [DEV_SHOWCASE_MACHINE_SESSION_ID, {
+      machineId: DEV_SHOWCASE_LOCAL_MACHINE_ID,
+      snapshot: machineSnapshot,
+      events: [],
       configuration: createDevShowcaseConfiguration("claude-code"),
       configOptions: structuredClone(DEV_SHOWCASE_CONFIG_OPTIONS),
     }],
@@ -189,13 +199,14 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
       case "_deskfleet/session/create": {
         const now = new Date().toISOString()
         const newId = `90${++createdSessionSeq}`
-        const workspaceId = typeof params.workspaceId === "string" ? params.workspaceId : "101"
+        const workspaceId = typeof params.workspaceId === "string" && params.workspaceId ? params.workspaceId : undefined
         const providerId = typeof params.provider === "string" ? params.provider : "claude-code"
         const context = params.context === "worktree" ? "worktree" : "directory"
         const title = typeof params.title === "string" && params.title.trim() ? params.title.trim() : "New session"
         const deferStartup = params.deferStartup === true
         const catalog = catalogs[machineId] ?? catalogs[DEV_SHOWCASE_LOCAL_MACHINE_ID]!
-        const workspace = catalog.workspaces.find(item => item.id === workspaceId) ?? catalog.workspaces[0]
+        catalog.sessionIds.unshift(newId)
+        const workspace = workspaceId ? catalog.workspaces.find(item => item.id === workspaceId) : undefined
         if (workspace) {
           workspace.worktrees.push({
             id: `wt-${newId}`,
@@ -207,7 +218,7 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
         const initialSnapshot: AgentSnapshot = {
           session: {
             id: newId,
-            workspaceId,
+            ...(workspaceId ? { workspaceId } : {}),
             title,
             provider: providerId,
             context,

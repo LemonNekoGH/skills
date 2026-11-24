@@ -53,7 +53,9 @@ Open the printed URLs with `agent-browser` or a desktop browser:
      - Queued `AgentBacklog` input item (`Send now`, `Edit`, `Remove`).
      - `AgentUsage` context window ring (`68,420 / 200,000` tokens, `$0.1845`).
      - Provider / Model / Mode / Reasoning effort configuration selector (`Claude Code · Claude Sonnet 4.5 · High`) and `/plan`, `/review`, `/compact`, `/test` slash commands.
-2. **Error State Session (`#/sessions/sess-error`)**
+2. **Machine-scoped Session (`#/sessions/sess-machine-home`)**
+   - Displays an unread session directly under `Studio MacBook Pro` with no owning Workspace (`workspaceId` omitted).
+3. **Error State Session (`#/sessions/sess-error`)**
    - Displays a session in `lifecycle: "error"` with the top `ErrorNotice` banner, failed turn state, and a pending interactive elicitation form card.
 3. **Archived Sessions (`#/sessions/archived`)**
    - Displays `sess-archived` with restore/delete controls.
