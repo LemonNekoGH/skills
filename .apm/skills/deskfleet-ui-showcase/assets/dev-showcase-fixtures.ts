@@ -111,6 +111,7 @@ export function createDevShowcaseSnapshot(): AgentSnapshot {
     context: "worktree",
     lifecycle: "ready",
     archiveState: "active",
+    capabilities: { steering: true, resume: true, fork: true, additionalDirectories: true },
     configuration: createDevShowcaseConfiguration("claude-code"),
     lastEventSeq: "18",
     lastCompletedSeq: "16",
@@ -571,13 +572,52 @@ export function createDevShowcaseErrorSnapshot(): AgentSnapshot {
     endedAt: "2026-04-12T09:31:15.000Z",
     error: "Provider process exited with code 128: unable to prepare Git worktree.",
   }
+  const elicitation = {
+    id: "elicit-error-1",
+    sessionId: DEV_SHOWCASE_ERROR_SESSION_ID,
+    turnId: "turn-error-1",
+    runGeneration: 1,
+    state: "pending" as const,
+    createdAt: "2026-04-12T09:31:20.000Z",
+    request: {
+      sessionId: "prov-sess-error",
+      mode: "form" as const,
+      message: "Choose worktree recovery options:",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          strategy: {
+            type: "string",
+            title: "Recovery strategy",
+            default: "recreate",
+            oneOf: [
+              { const: "recreate", title: "Recreate worktree", description: "Reset cleanly from committed HEAD" },
+              { const: "keep", title: "Keep existing checkout", description: "Preserve untracked local files" },
+            ],
+          },
+          scopes: {
+            type: "array",
+            title: "Verification targets",
+            default: ["web"],
+            items: {
+              anyOf: [
+                { const: "web", title: "Web client", description: "Run Vite + UnoCSS verification" },
+                { const: "desktop", title: "Desktop client", description: "Run Electron renderer suite" },
+              ],
+            },
+          },
+        },
+        required: ["strategy"],
+      },
+    },
+  }
   return {
     session,
     runs: [{ sessionId: DEV_SHOWCASE_ERROR_SESSION_ID, generation: 1, state: "failed", startedAt: "2026-04-12T09:30:05.000Z", endedAt: "2026-04-12T09:31:15.000Z", error: session.error }],
     inputs: [input],
     turns: [turn],
     permissions: [],
-    elicitations: [],
+    elicitations: [elicitation],
   }
 }
 
@@ -585,6 +625,7 @@ export function createDevShowcaseErrorEvents(snapshot = createDevShowcaseErrorSn
   return [
     { sessionId: snapshot.session.id, seq: "1", kind: "input", turnId: "turn-error-1", inputId: snapshot.inputs[0]!.id, runGeneration: 1, createdAt: "2026-04-12T09:30:05.000Z", payload: snapshot.inputs[0]! },
     { sessionId: snapshot.session.id, seq: "2", kind: "turn", turnId: "turn-error-1", runGeneration: 1, createdAt: "2026-04-12T09:31:15.000Z", payload: snapshot.turns[0]! },
+    { sessionId: snapshot.session.id, seq: "3", kind: "elicitation", turnId: "turn-error-1", runGeneration: 1, createdAt: "2026-04-12T09:31:20.000Z", payload: snapshot.elicitations[0]! },
   ]
 }
 
@@ -611,9 +652,10 @@ function createCompletedStubSnapshot(options: {
     context: "directory",
     lifecycle: "ready",
     archiveState: options.archiveState,
-    lastEventSeq: "2",
-    lastCompletedSeq: "2",
-    lastReadSeq: "2",
+    capabilities: { steering: true, resume: true, fork: true, additionalDirectories: true },
+    lastEventSeq: "0",
+    lastCompletedSeq: "0",
+    lastReadSeq: "0",
     createdAt: options.createdAt,
     updatedAt: options.updatedAt,
   }
@@ -725,7 +767,7 @@ export const DEV_SHOWCASE_MACHINES: Machine[] = [
     online: true,
     lastSeenAt: "2026-04-12T10:17:50.000Z",
     capabilities: {
-      desktop: false,
+      desktop: true,
       platform: "linux",
       mux: MUX_PROFILE,
       muxServer: MUX_PROFILE,

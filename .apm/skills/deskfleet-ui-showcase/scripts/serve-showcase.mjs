@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const skillDir = resolve(scriptDir, "..")
-const bootstrapPath = resolve(skillDir, "assets/bootstrap.ts")
+const bootstrapPath = resolve(skillDir, "assets/bootstrap.ts").replaceAll("\\", "/")
 
 function parseArgs(argv) {
   const options = {
@@ -82,12 +82,12 @@ function createShowcaseVitePlugin() {
       if (cleanId.endsWith("/packages/components/src/composables/useAccountSession.ts")) {
         const target = "let machineDestination: { teamId: string; machineId: string; route: RouteLocationRaw } | undefined"
         if (code.includes(target) && !code.includes(`${target} =`)) {
-          const replacement = `${target} = { teamId: "team-core", machineId: "machine-studio", route: (typeof window !== "undefined" && window.location.hash.replace(/^#/, "")) || "/sessions/sess-showcase" }`
+          const replacement = `${target} = (() => { const route = (typeof window !== "undefined" && window.location.hash.replace(/^#/, "")) || "/sessions/sess-showcase"; const match = /^\\/machines\\/([^/?]+)/.exec(route); return { teamId: "team-core", machineId: match?.[1] ?? "machine-studio", route } })()`
           return {
             code: code
               .replace(target, replacement)
               .replace(
-                "      members.value = []\n      machineDestination = undefined",
+                /      members\.value = \[\]\r?\n      machineDestination = undefined/,
                 "      members.value = []\n      if (machineDestination?.teamId !== teamId.value) machineDestination = undefined",
               ),
             map: null,

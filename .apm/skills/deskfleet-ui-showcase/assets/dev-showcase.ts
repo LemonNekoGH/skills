@@ -39,6 +39,7 @@ import {
   DEV_SHOWCASE_SITE,
   DEV_SHOWCASE_TEAM_ID,
   DEV_SHOWCASE_TEAMS,
+  DEV_SHOWCASE_TERMINAL_OUTPUT,
 } from "./dev-showcase-fixtures.ts"
 
 export * from "./dev-showcase-fixtures.ts"
@@ -90,8 +91,11 @@ function createInitialSessions(): Map<string, SessionRecordState> {
 
 /** In-memory Central + ACP host for DeskFleet UI Showcase without a daemon or account login. */
 export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>): DeskfleetDesktopApi {
-  if (typeof window !== "undefined" && (!window.location.hash || window.location.hash === "#" || window.location.hash === "#/")) {
-    window.location.hash = `#/sessions/${DEV_SHOWCASE_SESSION_ID}`
+  if (typeof window !== "undefined") {
+    const search = new URLSearchParams(window.location.search)
+    if (search.get("route") !== "new" && (!window.location.hash || window.location.hash === "#" || window.location.hash === "#/")) {
+      window.location.hash = `#/sessions/${DEV_SHOWCASE_SESSION_ID}`
+    }
   }
 
   const centralListeners = new Set<(event: CentralEvent) => void>()
@@ -102,6 +106,12 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
   const catalogs: Record<string, CatalogSnapshot> = structuredClone(DEV_SHOWCASE_CATALOGS)
   const providerState: ProviderSnapshot = structuredClone(DEV_SHOWCASE_PROVIDER_SNAPSHOT)
   const sessions = createInitialSessions()
+  const stoppedSessions = new Set<string>()
+  const showcaseTerminals = [
+    { id: "term-1", title: "zsh", cwd: "/workspace/deskfleet", cols: 80, rows: 24, status: "running" as const },
+    { id: "term-2", title: "cargo watch", cwd: "/workspace/deskfleet", cols: 80, rows: 24, status: "running" as const },
+  ]
+  let createdSessionSeq = 0
 
   const emitCentral = (event: CentralEvent) => {
     for (const listener of centralListeners) listener(event)
@@ -176,6 +186,122 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
         return [...sessions.values()]
           .filter(item => item.machineId === machineId)
           .map(item => structuredClone(item.snapshot.session))
+      case "_deskfleet/session/create": {
+        const now = new Date().toISOString()
+        const newId = `90${++createdSessionSeq}`
+        const workspaceId = typeof params.workspaceId === "string" ? params.workspaceId : "101"
+        const providerId = typeof params.provider === "string" ? params.provider : "claude-code"
+        const context = params.context === "worktree" ? "worktree" : "directory"
+        const title = typeof params.title === "string" && params.title.trim() ? params.title.trim() : "New session"
+        const deferStartup = params.deferStartup === true
+        const catalog = catalogs[machineId] ?? catalogs[DEV_SHOWCASE_LOCAL_MACHINE_ID]!
+        const workspace = catalog.workspaces.find(item => item.id === workspaceId) ?? catalog.workspaces[0]
+        if (workspace) {
+          workspace.worktrees.push({
+            id: `wt-${newId}`,
+            sessionId: newId,
+            workspaceId: workspace.id,
+            directories: [{ path: "/workspace/deskfleet" }],
+          })
+        }
+        const initialSnapshot: AgentSnapshot = {
+          session: {
+            id: newId,
+            workspaceId,
+            title,
+            provider: providerId,
+            context,
+            lifecycle: deferStartup ? "provisioning" : "ready",
+            archiveState: "active",
+            capabilities: { steering: true, resume: true, fork: true, additionalDirectories: true },
+            lastEventSeq: "0",
+            createdAt: now,
+            updatedAt: now,
+          },
+          runs: deferStartup
+            ? []
+            : [{ generation: 1, sessionId: newId, state: "starting", startedAt: now }],
+          turns: [],
+          inputs: [],
+          permissions: [],
+          elicitations: [],
+        }
+        const record: SessionRecordState = {
+          machineId,
+          snapshot: initialSnapshot,
+          events: [],
+          configuration: createDevShowcaseConfiguration(providerId),
+          configOptions: structuredClone(DEV_SHOWCASE_CONFIG_OPTIONS),
+        }
+        applyConfigSelection(record, params)
+        sessions.set(newId, record)
+        emitCentral({ type: "catalogChanged", teamId: DEV_SHOWCASE_TEAM_ID, machineId, sessionId: newId })
+        if (!deferStartup) {
+          await new Promise(resolve => setTimeout(resolve, 1600))
+          return structuredClone(record.snapshot)
+        }
+        setTimeout(() => {
+          if (stoppedSessions.has(newId)) return
+          const createdAt = new Date().toISOString()
+          record.snapshot.session.lifecycle = "ready"
+          appendSessionEvent(record, {
+            sessionId: newId,
+            kind: "session",
+            createdAt,
+            payload: structuredClone(record.snapshot.session),
+          })
+          const startingRun = {
+            generation: 1,
+            sessionId: newId,
+            state: "starting" as const,
+            startedAt: createdAt,
+          }
+          record.snapshot.runs = [startingRun]
+          appendSessionEvent(record, {
+            sessionId: newId,
+            kind: "run",
+            runGeneration: 1,
+            createdAt,
+            payload: structuredClone(startingRun),
+          })
+        }, 1400)
+        return structuredClone(record.snapshot)
+      }
+      case "_deskfleet/session/stop": {
+        if (!state) throw new Error(`Unknown showcase session: ${sessionId}`)
+        stoppedSessions.add(sessionId)
+        const now = new Date().toISOString()
+        if (state.snapshot.session.lifecycle === "provisioning") {
+          state.snapshot.session.lifecycle = "ready"
+          appendSessionEvent(state, {
+            sessionId,
+            kind: "session",
+            createdAt: now,
+            payload: structuredClone(state.snapshot.session),
+          })
+        }
+        const existingRun = state.snapshot.runs.at(-1)
+        const stoppedRun = {
+          generation: existingRun?.generation ?? 1,
+          sessionId,
+          state: "stopped" as const,
+          startedAt: existingRun?.startedAt ?? now,
+          endedAt: now,
+        }
+        if (existingRun) {
+          state.snapshot.runs[state.snapshot.runs.length - 1] = stoppedRun
+        } else {
+          state.snapshot.runs.push(stoppedRun)
+        }
+        appendSessionEvent(state, {
+          sessionId,
+          kind: "run",
+          runGeneration: stoppedRun.generation,
+          createdAt: now,
+          payload: structuredClone(stoppedRun),
+        })
+        return structuredClone(state.snapshot)
+      }
       case "_deskfleet/session/subscribe":
         if (!state) throw new Error(`Unknown showcase session: ${sessionId}`)
         return structuredClone(state.snapshot)
@@ -197,6 +323,11 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
         if (state && typeof params.title === "string") {
           state.snapshot.session.title = params.title
           state.snapshot.session.titleCustomized = true
+        }
+        return structuredClone((state ?? sessions.get(DEV_SHOWCASE_SESSION_ID)!).snapshot)
+      case "_deskfleet/session/yolo":
+        if (state && typeof params.enabled === "boolean") {
+          state.snapshot.session.yolo = params.enabled
         }
         return structuredClone((state ?? sessions.get(DEV_SHOWCASE_SESSION_ID)!).snapshot)
       case "_deskfleet/session/archive":
@@ -277,6 +408,8 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
         const commandId = `cmd-${Date.now()}`
         const inputId = typeof params.inputId === "string" ? params.inputId : `input-${Date.now()}`
         if (state && method === "_deskfleet/input/submit" && Array.isArray(params.content)) {
+          const latestRun = state.snapshot.runs.at(-1)
+          const delivery = params.delivery === "steer" ? "steer" : "backlog"
           const created: AgentInput = {
             id: inputId,
             sessionId,
@@ -285,7 +418,7 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
             content: params.content as AgentInput["content"],
             acceptedSeq: (BigInt(state.snapshot.session.lastEventSeq || "0") + 1n).toString(),
             state: "pending",
-            requestedDelivery: params.delivery === "steer" ? "steer" : "backlog",
+            requestedDelivery: delivery,
             createdAt: new Date().toISOString(),
           }
           state.snapshot.inputs.push(created)
@@ -297,6 +430,23 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
             createdAt: created.createdAt,
             payload: structuredClone(created),
           })
+          if (state.snapshot.session.lifecycle === "ready" && (!latestRun || !["starting", "running"].includes(latestRun.state))) {
+            stoppedSessions.delete(sessionId)
+            const nextRun = {
+              generation: (latestRun?.generation ?? 0) + 1,
+              sessionId,
+              state: "starting" as const,
+              startedAt: created.createdAt,
+            }
+            state.snapshot.runs.push(nextRun)
+            appendSessionEvent(state, {
+              sessionId,
+              kind: "run",
+              runGeneration: nextRun.generation,
+              createdAt: created.createdAt,
+              payload: structuredClone(nextRun),
+            })
+          }
         }
         return { operationId, commandId, inputId, sessionId } satisfies AgentReceipt
       }
@@ -313,6 +463,82 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
     }
   }
 
+  const nowMs = Date.now()
+  const isoOffset = (hours: number) => new Date(nowMs + hours * 3_600_000).toISOString()
+  const showcaseSchedules: Record<string, Array<Record<string, unknown>>> = {
+    [DEV_SHOWCASE_LOCAL_MACHINE_ID]: [
+      {
+        id: "sched-nightly-triage",
+        title: "Nightly CI & PR triage",
+        prompt: "Review failed CI checks across open pull requests and post a summary.",
+        workspaceId: "101",
+        enabled: true,
+        target: { kind: "new", provider: "claude-code", context: "worktree" },
+        trigger: { kind: "daily", time: "09:00", timeZone: "Asia/Shanghai" },
+        createdAt: isoOffset(-240),
+        updatedAt: isoOffset(-2),
+        nextRunAt: isoOffset(14),
+        lastRun: {
+          id: "run-101",
+          state: "completed",
+          scheduledFor: isoOffset(-2),
+          startedAt: isoOffset(-2),
+          endedAt: isoOffset(-1.9),
+          sessionId: DEV_SHOWCASE_SESSION_ID,
+        },
+        runs: [
+          {
+            id: "run-101",
+            state: "completed",
+            scheduledFor: isoOffset(-2),
+            startedAt: isoOffset(-2),
+            endedAt: isoOffset(-1.9),
+            sessionId: DEV_SHOWCASE_SESSION_ID,
+          },
+        ],
+      },
+      {
+        id: "sched-weekly-deps",
+        title: "Weekly dependency audit",
+        prompt: "Check outdated Rust and pnpm packages and prepare a summary.",
+        workspaceId: "101",
+        enabled: false,
+        target: { kind: "new", provider: "codex", context: "directory" },
+        trigger: { kind: "weekly", time: "10:30", timeZone: "Asia/Shanghai", weekdays: [1, 4] },
+        createdAt: isoOffset(-360),
+        updatedAt: isoOffset(-48),
+        runs: [],
+      },
+      {
+        id: "sched-release-notes",
+        title: "Draft release changelog",
+        prompt: "Summarize merged PRs since the latest git tag into release notes.",
+        workspaceId: "102",
+        enabled: true,
+        target: { kind: "new", provider: "claude-code", context: "directory" },
+        trigger: { kind: "manual" },
+        createdAt: isoOffset(-120),
+        updatedAt: isoOffset(-12),
+        runs: [],
+      },
+    ],
+    [DEV_SHOWCASE_REMOTE_MACHINE_ID]: [
+      {
+        id: "sched-runner-smoke",
+        title: "Staging smoke verification",
+        prompt: "Run smoke checks on staging and report any latency regressions.",
+        workspaceId: "201",
+        enabled: true,
+        target: { kind: "new", provider: "codex", context: "worktree" },
+        trigger: { kind: "interval", minutes: 360 },
+        createdAt: isoOffset(-180),
+        updatedAt: isoOffset(-4),
+        nextRunAt: isoOffset(2),
+        runs: [],
+      },
+    ],
+  }
+
   async function handleRpc<T>(machineId: string, method: string, params: unknown): Promise<T> {
     if (method.startsWith("_deskfleet/")) {
       return await handleAgentMethod(machineId, method, params) as T
@@ -320,8 +546,68 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
     const record = (params && typeof params === "object" ? params : {}) as Record<string, unknown>
     switch (method) {
       case "terminalList":
+        return structuredClone(showcaseTerminals) as unknown as T
+      case "terminalDial": {
+        const terminalId = typeof record.terminalId === "string" ? record.terminalId : `term-${Date.now()}`
+        let found = showcaseTerminals.find(item => item.id === terminalId)
+        if (!found) {
+          found = {
+            id: terminalId,
+            title: "zsh",
+            cwd: typeof record.cwd === "string" ? record.cwd : "/workspace/deskfleet",
+            cols: typeof record.cols === "number" ? record.cols : 80,
+            rows: typeof record.rows === "number" ? record.rows : 24,
+            status: "running" as const,
+          }
+          showcaseTerminals.push(found)
+        }
+        return structuredClone(found) as unknown as T
+      }
+      case "terminalHangup": {
+        const idx = showcaseTerminals.findIndex(item => item.id === record.terminalId)
+        if (idx >= 0) showcaseTerminals.splice(idx, 1)
+        return null as unknown as T
+      }
       case "scheduleList":
-        return [] as unknown as T
+        return structuredClone(showcaseSchedules[machineId] ?? []) as unknown as T
+      case "scheduleCreate": {
+        const schedule = (record.schedule ?? {}) as Record<string, unknown>
+        const created = {
+          ...schedule,
+          id: `sched-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          runs: [],
+        }
+        showcaseSchedules[machineId] ??= []
+        showcaseSchedules[machineId]!.unshift(created)
+        emitCentral({ type: "catalogChanged", teamId: DEV_SHOWCASE_TEAM_ID, machineId })
+        return structuredClone(created) as unknown as T
+      }
+      case "scheduleUpdate": {
+        const list = showcaseSchedules[machineId] ?? []
+        const target = list.find(item => item.id === record.scheduleId)
+        if (target && record.changes && typeof record.changes === "object") {
+          Object.assign(target, record.changes, { updatedAt: new Date().toISOString() })
+        }
+        emitCentral({ type: "catalogChanged", teamId: DEV_SHOWCASE_TEAM_ID, machineId })
+        return structuredClone(target ?? list[0]) as unknown as T
+      }
+      case "scheduleDelete": {
+        showcaseSchedules[machineId] = (showcaseSchedules[machineId] ?? []).filter(item => item.id !== record.scheduleId)
+        emitCentral({ type: "catalogChanged", teamId: DEV_SHOWCASE_TEAM_ID, machineId })
+        return null as unknown as T
+      }
+      case "scheduleRun": {
+        const run = {
+          id: `run-${Date.now()}`,
+          state: "running",
+          scheduledFor: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          sessionId: DEV_SHOWCASE_SESSION_ID,
+        }
+        return run as unknown as T
+      }
       case "providerList":
         return structuredClone(providerState) as unknown as T
       case "providerCreate": {
@@ -352,13 +638,20 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
       case "providerTest":
         return { agentName: "Claude Code (Showcase)" } as unknown as T
       case "systemStatus":
-        return { hostname: "studio-mbp.local", platform: "darwin", arch: "arm64", uptimeSeconds: 86_400 } as unknown as T
+        return {
+          hostname: machineId === DEV_SHOWCASE_LOCAL_MACHINE_ID ? "studio-mbp.local" : "runner-us-east",
+          platform: machineId === DEV_SHOWCASE_LOCAL_MACHINE_ID ? "darwin" : "linux",
+          arch: machineId === DEV_SHOWCASE_LOCAL_MACHINE_ID ? "arm64" : "x64",
+          uptimeSeconds: 86_400,
+          ...(machineId === DEV_SHOWCASE_LOCAL_MACHINE_ID ? { battery: { percent: 78, state: "charging" } } : {}),
+        } as unknown as T
       case "capabilities":
         return {
-          desktop: true,
           audio: false,
-          codecs: ["vp8", "h264"],
-          displays: [{ id: "display-1", name: "Built-in Retina XDR Display", width: 1728, height: 1117, primary: true, scaleFactor: 2 }],
+          displays: [
+            { id: 1, width: 1920, height: 1080, refreshRateHz: 60, codecs: ["av1", "h265", "h264"] },
+            { id: 2, width: 2560, height: 1440, refreshRateHz: 120, codecs: ["av1", "h265", "h264"] },
+          ],
         } as unknown as T
       case "directoryList":
         return {
@@ -394,13 +687,50 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
       const channel = openChannels.get(connectionId)
       if (!channel) return
       const chunk = typeof data === "string" ? data : new TextDecoder().decode(data)
+      if (channel.purpose === "terminal") {
+        const message = JSON.parse(chunk) as { id?: number | string; method?: string; params?: Record<string, unknown> }
+        const emitTerminal = (payload: unknown) => {
+          const text = JSON.stringify(payload)
+          for (const listener of channelListeners) listener({ connectionId, kind: "message", data: text })
+        }
+        if (message.method && message.id !== undefined) {
+          const termId = typeof message.params?.sessionId === "string" ? message.params.sessionId : "term-1"
+          const term = showcaseTerminals.find(item => item.id === termId) ?? showcaseTerminals[0]!
+          if (message.method === "attach") {
+            emitTerminal({ id: message.id, result: structuredClone(term) })
+            const output = btoa(String.fromCharCode(...new TextEncoder().encode(DEV_SHOWCASE_TERMINAL_OUTPUT)))
+            queueMicrotask(() => {
+              emitTerminal({ event: { kind: "output", sessionId: term.id, data: output, offset: DEV_SHOWCASE_TERMINAL_OUTPUT.length } })
+              emitTerminal({ event: { kind: "ready", sessionId: term.id } })
+            })
+          } else {
+            emitTerminal({ id: message.id, result: null })
+          }
+        }
+        return
+      }
       channel.buffer += chunk
       const lines = channel.buffer.split("\n")
       channel.buffer = lines.pop() ?? ""
       for (const line of lines) {
         if (!line.trim()) continue
-        const message = JSON.parse(line) as { id?: number | string; method?: string; params?: unknown }
+        const message = JSON.parse(line) as { id?: number | string; method?: string; params?: Record<string, unknown> }
         if (message.method && message.id !== undefined) {
+          if (channel.purpose === "terminal") {
+            const termId = typeof message.params?.sessionId === "string" ? message.params.sessionId : "term-1"
+            const term = showcaseTerminals.find(item => item.id === termId) ?? showcaseTerminals[0]!
+            if (message.method === "attach") {
+              emitChannelMessage(connectionId, { id: message.id, result: structuredClone(term) })
+              const output = btoa(String.fromCharCode(...new TextEncoder().encode(DEV_SHOWCASE_TERMINAL_OUTPUT)))
+              queueMicrotask(() => {
+                emitChannelMessage(connectionId, { event: { kind: "output", sessionId: term.id, data: output, offset: DEV_SHOWCASE_TERMINAL_OUTPUT.length } })
+                emitChannelMessage(connectionId, { event: { kind: "ready", sessionId: term.id } })
+              })
+            } else {
+              emitChannelMessage(connectionId, { id: message.id, result: null })
+            }
+            continue
+          }
           try {
             const result = await handleAgentMethod(channel.machineId, message.method, message.params)
             emitChannelMessage(connectionId, { jsonrpc: "2.0", id: message.id, result })
@@ -424,6 +754,24 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
   }
 
   const central: CentralApi = {
+    superAgentAvailability: async () => ({ enabled: true }),
+    superAgentConfig: async () => ({ mode: "hosted", hostedConfigured: true, canConfigure: true, byoa: null }) as never,
+    updateSuperAgentConfig: async () => ({ mode: "hosted", hostedConfigured: true, canConfigure: true, byoa: null }) as never,
+    superAgentSessions: async () => ([
+      { sessionId: "sa-release-plan", title: "Plan v0.24 sidebar redesign rollout", lastActiveAt: Date.now() - 120_000, engine: "hosted" },
+      { sessionId: "sa-triage", title: "Cross-machine build runner triage", lastActiveAt: Date.now() - 3_600_000, engine: "hosted" },
+    ]) as never,
+    registerSuperAgentMachineSession: async (_teamId, input) => ({
+      sessionId: `sa-${Date.now()}`,
+      title: input.title ?? "Super Agent",
+      lastActiveAt: Date.now(),
+      engine: "byoa",
+    }) as never,
+    superAgentUsage: async () => ({ admitted: true, runtimeConfigured: true, includedCredits: 1000, usedCredits: 120 }) as never,
+    createSuperAgentSession: async () => ({ sessionId: `sa-${Date.now()}` }),
+    sendSuperAgentMessage: async (_teamId, sessionId) => ({ sessionId, deliveryId: `del-${Date.now()}` }),
+    cancelSuperAgentTurn: async () => {},
+    superAgentHistory: async () => ({ items: [], nextIndex: 0, hasMore: false }) as never,
     status: async () => structuredClone(DEV_SHOWCASE_ACCOUNT),
     login: async () => {},
     logout: async () => {},
@@ -440,6 +788,7 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
         state: "open",
       },
     }),
+    githubRepositoryItems: async () => ({ items: [], hasMore: false }) as never,
     billing: async () => ({
       prices: [
         { plan: "go", interval: "month", unitAmount: 2000, currency: "usd" },
@@ -458,6 +807,7 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
     checkout: async () => {},
     billingPortal: async () => {},
     site: async () => structuredClone(DEV_SHOWCASE_SITE),
+    updateTelemetryConsent: async () => {},
     teams: async () => structuredClone(teams),
     createTeam: async (name: string): Promise<Team> => {
       const created: Team = { id: `team-${Date.now()}`, name, role: "owner" }
@@ -471,14 +821,28 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
     aiUsage: async (_teamId, query) => ({
       period: query.period,
       timeZone: query.timeZone,
-      from: "2026-04-05T00:00:00.000Z",
-      to: "2026-04-12T23:59:59.000Z",
+      from: "2026-04-01",
+      to: "2026-04-14",
       lastSyncedAt: "2026-04-12T10:18:00.000Z",
-      totals: { totalTokens: 68_400, inputTokens: 54_200, outputTokens: 14_200, cachedReadTokens: 12_000, cachedWriteTokens: 0, thoughtTokens: 4_100, turnCount: 4, reportedTurnCount: 4 },
-      buckets: [],
-      heatmap: [],
-      models: [{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", totalTokens: 68_400, turnCount: 4, reportedTurnCount: 4 }],
-      members: [{ id: "user-ada", name: "Ada Lovelace", totalTokens: 68_400, turnCount: 4, reportedTurnCount: 4 }],
+      totals: { totalTokens: 68_400, inputTokens: 54_200, outputTokens: 14_200, cachedReadTokens: 12_000, cachedWriteTokens: 0, thoughtTokens: 4_100, turnCount: 18, reportedTurnCount: 18 },
+      buckets: [
+        { start: "2026-04-08T00:00:00.000Z", totalTokens: 14_200, turnCount: 4, reportedTurnCount: 4, models: { "claude-sonnet-4-5": 14_200 }, members: { "user-ada": 14_200 } },
+        { start: "2026-04-10T00:00:00.000Z", totalTokens: 26_400, turnCount: 7, reportedTurnCount: 7, models: { "claude-sonnet-4-5": 26_400 }, members: { "user-ada": 26_400 } },
+        { start: "2026-04-12T00:00:00.000Z", totalTokens: 27_800, turnCount: 7, reportedTurnCount: 7, models: { "claude-sonnet-4-5": 27_800 }, members: { "user-ada": 27_800 } },
+      ],
+      heatmap: Array.from({ length: 371 }, (_, idx) => {
+        const d = new Date(Date.parse("2026-04-14T00:00:00.000Z") - (370 - idx) * 86_400_000)
+        const date = d.toISOString().slice(0, 10)
+        if (date === "2026-04-05") return { date, totalTokens: 29_100, turnCount: 6, reportedTurnCount: 6 }
+        if (date === "2026-04-08") return { date, totalTokens: 14_200, turnCount: 4, reportedTurnCount: 4 }
+        if (date === "2026-04-10") return { date, totalTokens: 26_400, turnCount: 7, reportedTurnCount: 7 }
+        if (date === "2026-04-12") return { date, totalTokens: 27_800, turnCount: 7, reportedTurnCount: 7 }
+        if ((idx * 13 + 5) % 9 === 0) return { date, totalTokens: 0, turnCount: 0, reportedTurnCount: 0 }
+        const levelTokens = ((idx * 7 + 3) % 4 + 1) * 6_500
+        return { date, totalTokens: levelTokens, turnCount: 2, reportedTurnCount: 2 }
+      }),
+      models: [{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", totalTokens: 68_400, turnCount: 18, reportedTurnCount: 18 }],
+      members: [{ id: "user-ada", name: "Ada Lovelace", totalTokens: 68_400, turnCount: 18, reportedTurnCount: 18 }],
     }),
     aiUsageSessions: async (_teamId, query) => ({ date: query.date, timeZone: query.timeZone, sessions: [], truncated: false }),
     search: async (_teamId, query) => ({
@@ -496,7 +860,10 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
         }]
         : [],
     }),
-    scheduleSnapshot: async () => structuredClone(DEV_SHOWCASE_SCHEDULES),
+    scheduleSnapshot: async (_teamId, machineId) => ({
+      tasks: structuredClone(showcaseSchedules[machineId] ?? []),
+      lastObservedAt: "2026-04-12T10:18:00.000Z",
+    }) as never,
     renameTeam: async (teamId, name) => {
       const target = teams.find(item => item.id === teamId) ?? teams[0]!
       target.name = name
@@ -586,10 +953,177 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
       },
       iceServers: [],
     }),
-    offerPeer: async () => ({ sdp: "" }),
+    offerPeer: async (peerId, sdp) => {
+      const peer = new RTCPeerConnection()
+      const canvas = document.createElement("canvas")
+      canvas.width = 1280
+      canvas.height = 720
+      const ctx = canvas.getContext("2d")!
+      const state = {
+        scrollY: 160,
+        lastDeltaX: 0,
+        lastDeltaY: 0,
+        wheelEvents: 0,
+      };
+      (window as unknown as Record<string, unknown>).__deskfleetShowcaseDesktop = state
+
+      const draw = () => {
+        ctx.fillStyle = "#0f172a"
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        // Top bar of simulated remote desktop
+        ctx.fillStyle = "#1e293b"
+        ctx.fillRect(0, 0, canvas.width, 36)
+        ctx.fillStyle = "#94a3b8"
+        ctx.font = "600 14px -apple-system, BlinkMacSystemFont, sans-serif"
+        ctx.fillText("Build Runner us-east · Remote Desktop (1920 × 1080)", 18, 23)
+
+        // Simulated scrollable log/editor window on remote desktop
+        const winX = 96
+        const winY = 68
+        const winW = 1088
+        const winH = 592
+        ctx.fillStyle = "#111827"
+        ctx.fillRect(winX, winY, winW, winH)
+        ctx.strokeStyle = "#334155"
+        ctx.lineWidth = 2
+        ctx.strokeRect(winX, winY, winW, winH)
+
+        // Window header
+        ctx.fillStyle = "#1f2937"
+        ctx.fillRect(winX, winY, winW, 44)
+        ctx.fillStyle = "#e2e8f0"
+        ctx.font = "600 15px -apple-system, BlinkMacSystemFont, sans-serif"
+        ctx.fillText("release-notes.md", winX + 20, winY + 28)
+
+        // Status pill on the left side of the window header so Stream settings never covers it
+        const badgeText = state.wheelEvents === 0
+          ? `Scroll offset: ${Math.round(state.scrollY)} px · Ready`
+          : state.lastDeltaY < 0
+            ? `Scroll offset: ${Math.round(state.scrollY)} px · Wheel deltaY < 0 (Reversed ↑)`
+            : `Scroll offset: ${Math.round(state.scrollY)} px · Wheel deltaY > 0 (Normal ↓)`
+        ctx.fillStyle = state.lastDeltaY < 0 ? "#065f46" : state.lastDeltaY > 0 ? "#1e3a8a" : "#334155"
+        ctx.fillRect(winX + 180, winY + 8, 460, 28)
+        ctx.fillStyle = "#f8fafc"
+        ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace"
+        ctx.fillText(badgeText, winX + 194, winY + 27)
+
+        // Clip scrollable body
+        ctx.save()
+        ctx.beginPath()
+        ctx.rect(winX + 2, winY + 45, winW - 20, winH - 47)
+        ctx.clip()
+
+        const rowHeight = 46
+        for (let i = 1; i <= 40; i += 1) {
+          const y = winY + 60 + (i - 1) * rowHeight - state.scrollY
+          if (y + rowHeight < winY + 44 || y > winY + winH) continue
+          ctx.fillStyle = i % 2 === 0 ? "#1e293b" : "#172033"
+          ctx.fillRect(winX + 18, y, winW - 52, rowHeight - 8)
+          ctx.fillStyle = "#38bdf8"
+          ctx.font = "600 14px ui-monospace, SFMono-Regular, Menlo, monospace"
+          ctx.fillText(`#${String(i).padStart(2, "0")}`, winX + 34, y + 24)
+          ctx.fillStyle = "#e2e8f0"
+          ctx.font = "500 14px -apple-system, BlinkMacSystemFont, sans-serif"
+          ctx.fillText(`Remote workspace item ${i} — scroll wheel over stream to move viewport`, winX + 86, y + 24)
+        }
+        ctx.restore()
+
+        // Scrollbar track & thumb
+        const trackX = winX + winW - 14
+        const trackY = winY + 48
+        const trackH = winH - 52
+        ctx.fillStyle = "#0f172a"
+        ctx.fillRect(trackX, trackY, 8, trackH)
+        const maxScroll = 800
+        const thumbH = 96
+        const thumbY = trackY + Math.max(0, Math.min(1, state.scrollY / maxScroll)) * (trackH - thumbH)
+        ctx.fillStyle = "#60a5fa"
+        ctx.fillRect(trackX, thumbY, 8, thumbH)
+      }
+
+      draw()
+      const timer = setInterval(draw, 16)
+      const stream = canvas.captureStream(60)
+      for (const track of stream.getTracks()) {
+        peer.addTrack(track, stream)
+      }
+
+      peer.ondatachannel = ({ channel }) => {
+        channel.onopen = () => {
+          channel.send(JSON.stringify({ type: "ready" }))
+        }
+        channel.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(String(event.data)) as { type?: string; requestId?: number; control?: boolean; deltaX?: number; deltaY?: number }
+            if (msg.type === "configure") {
+              channel.send(JSON.stringify({ type: "configured", requestId: msg.requestId, control: Boolean(msg.control) }))
+            } else if (msg.type === "wheel") {
+              const dx = Number(msg.deltaX ?? 0)
+              const dy = Number(msg.deltaY ?? 0)
+              state.lastDeltaX = dx
+              state.lastDeltaY = dy
+              state.wheelEvents += 1
+              state.scrollY = Math.max(0, Math.min(800, state.scrollY + dy))
+              draw()
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      peer.onicecandidate = ({ candidate }) => {
+        if (!candidate) return
+        const json = candidate.toJSON()
+        emitCentral({
+          type: "peerEvent",
+          peerId,
+          event: {
+            kind: "iceCandidate",
+            candidate: {
+              candidate: json.candidate ?? "",
+              ...(json.sdpMid != null ? { sdpMid: json.sdpMid } : {}),
+              ...(json.sdpMLineIndex != null ? { sdpMlineIndex: json.sdpMLineIndex } : {}),
+              ...(json.usernameFragment != null ? { usernameFragment: json.usernameFragment } : {}),
+            },
+          },
+        })
+      }
+
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === "closed" || peer.connectionState === "failed") {
+          clearInterval(timer)
+        }
+      }
+
+      ;(central as unknown as { __peers?: Map<string, { peer: RTCPeerConnection; timer: ReturnType<typeof setInterval> }> }).__peers ??= new Map()
+      ;(central as unknown as { __peers: Map<string, { peer: RTCPeerConnection; timer: ReturnType<typeof setInterval> }> }).__peers.set(peerId, { peer, timer })
+
+      await peer.setRemoteDescription({ type: "offer", sdp })
+      const answer = await peer.createAnswer()
+      await peer.setLocalDescription(answer)
+      return { sdp: answer.sdp ?? "" }
+    },
     startPeer: async () => {},
-    candidatePeer: async () => {},
-    closePeer: async () => {},
+    candidatePeer: async (peerId, candidate) => {
+      const entry = (central as unknown as { __peers?: Map<string, { peer: RTCPeerConnection }> }).__peers?.get(peerId)
+      if (!entry) return
+      await entry.peer.addIceCandidate({
+        candidate: candidate.candidate,
+        ...(candidate.sdpMid != null ? { sdpMid: candidate.sdpMid } : {}),
+        ...(candidate.sdpMlineIndex != null ? { sdpMLineIndex: candidate.sdpMlineIndex } : {}),
+        ...(candidate.usernameFragment != null ? { usernameFragment: candidate.usernameFragment } : {}),
+      })
+    },
+    closePeer: async (peerId) => {
+      const peers = (central as unknown as { __peers?: Map<string, { peer: RTCPeerConnection; timer: ReturnType<typeof setInterval> }> }).__peers
+      const entry = peers?.get(peerId)
+      if (entry) {
+        clearInterval(entry.timer)
+        entry.peer.close()
+        peers?.delete(peerId)
+      }
+    },
     onEvent(listener) {
       centralListeners.add(listener)
       return () => { centralListeners.delete(listener) }
@@ -599,6 +1133,7 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
   return {
     platform: base?.platform ?? "darwin",
     locale: base?.locale ?? DEFAULT_LOCALE,
+    googleTag: { send: async () => {} },
     central,
     localChannels: channels,
     muxChannels: channels,
@@ -657,6 +1192,70 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
     },
     filesystem: {
       listDirectories: path => handleRpc(DEV_SHOWCASE_LOCAL_MACHINE_ID, "directoryList", { path }),
+    },
+    files: base?.files ?? {
+      list: async () => ({
+        path: "/workspace/deskfleet",
+        parentPath: "/workspace",
+        homePath: "/Users/ada",
+        roots: [{ name: "/", path: "/" }],
+        entries: [
+          { name: "README.md", path: "/workspace/deskfleet/README.md", kind: "file" as const, size: 4096, modifiedAt: Date.now() },
+          { name: "ScreenRecording_11-11.mp4", path: "/workspace/deskfleet/ScreenRecording_11-11.mp4", kind: "file" as const, size: 69_206_016, modifiedAt: Date.now() },
+        ],
+      }),
+      chooseLocalDirectory: async () => null,
+      enqueue: async () => "transfer-showcase",
+      transfers: async () => [],
+      cancel: async () => {},
+      retry: async () => {},
+      onChanged: () => () => {},
+      resolveResource: async () => ({
+        path: "/workspace/deskfleet/ScreenRecording_11-11.mp4",
+        name: "ScreenRecording_11-11.mp4",
+        kind: "file" as const,
+        size: 69_206_016,
+        modifiedAt: Date.now(),
+      }),
+      readResource: async request => ({
+        name: request.uri.split("/").pop() || "resource",
+        mimeType: "text/plain",
+        data: new Uint8Array(),
+      }),
+      saveResource: async () => null,
+      uploadAttachment: async (
+        request: { sessionId?: string; draftId?: string; name: string; data: Uint8Array },
+        options?: { onProgress?: (progress: { transferredBytes: number; totalBytes: number }) => void; signal?: AbortSignal },
+      ) => {
+        const totalBytes = request.data.byteLength || 69_206_016
+        const steps = [0, 0.18, 0.42, 0.68, 0.88, 1]
+        for (const ratio of steps) {
+          if (options?.signal?.aborted) {
+            throw new DOMException("Attachment upload cancelled", "AbortError")
+          }
+          options?.onProgress?.({
+            transferredBytes: Math.round(totalBytes * ratio),
+            totalBytes,
+          })
+          if (ratio < 1) {
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(resolve, 380)
+              options?.signal?.addEventListener("abort", () => {
+                clearTimeout(timer)
+                reject(new DOMException("Attachment upload cancelled", "AbortError"))
+              }, { once: true })
+            })
+          }
+        }
+        const scope = request.sessionId ?? `.drafts/${request.draftId ?? "draft"}`
+        const path = `/workspace/deskfleet/session-attachments/${scope}/${request.name}`
+        return {
+          path,
+          uri: `file://${path}`,
+          name: request.name,
+          size: request.data.byteLength,
+        }
+      },
     },
     system: {
       status: () => handleRpc(DEV_SHOWCASE_LOCAL_MACHINE_ID, "systemStatus", {}),

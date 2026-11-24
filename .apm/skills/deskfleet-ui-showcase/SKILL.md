@@ -54,10 +54,14 @@ Open the printed URLs with `agent-browser` or a desktop browser:
      - `AgentUsage` context window ring (`68,420 / 200,000` tokens, `$0.1845`).
      - Provider / Model / Mode / Reasoning effort configuration selector (`Claude Code · Claude Sonnet 4.5 · High`) and `/plan`, `/review`, `/compact`, `/test` slash commands.
 2. **Error State Session (`#/sessions/sess-error`)**
-   - Displays a session in `lifecycle: "error"` with the top `ErrorNotice` banner and failed turn state.
+   - Displays a session in `lifecycle: "error"` with the top `ErrorNotice` banner, failed turn state, and a pending interactive elicitation form card.
 3. **Archived Sessions (`#/sessions/archived`)**
    - Displays `sess-archived` with restore/delete controls.
-4. **Query overrides**
+4. **Scheduled Tasks (`#/schedules` and `#/schedules/sched-nightly-triage`)**
+   - Preloaded daily (active with recent run history), weekly (paused), manual, and interval scheduled tasks across `Studio MacBook Pro` and `Build Runner us-east`, with interactive create/update/run/delete RPC handlers.
+5. **Super Agent & Remote Desktops (`#/super-agent`, `#/desktops`)**
+   - Preloaded Super Agent conversations, battery telemetry on `Studio MacBook Pro`, and interactive remote desktop preview streams on `Build Runner us-east`.
+6. **Query overrides**
    - `?theme=dark` (default) or `?theme=light` switches the initial appearance theme.
    - `?platform=darwin` (default), `?platform=win32`, `?platform=linux`, or `?platform=web` switches platform chrome behavior.
 
