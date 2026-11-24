@@ -172,6 +172,11 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
   const machines = structuredClone(DEV_SHOWCASE_MACHINES)
   const catalogs: Record<string, CatalogSnapshot> = structuredClone(DEV_SHOWCASE_CATALOGS)
   const providerState: ProviderSnapshot = structuredClone(DEV_SHOWCASE_PROVIDER_SNAPSHOT)
+  const mcpServers: Array<{ id: string; name: string; enabled: boolean; builtIn?: boolean; transport: string; command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }> = [
+    { id: "auv", name: "auv", enabled: true, builtIn: true, transport: "stdio", command: "auv", args: ["mcp"], env: {} },
+    { id: "github", name: "GitHub MCP", enabled: true, transport: "http", url: "https://api.githubcopilot.com/mcp/", headers: {} },
+    { id: "sqlite", name: "SQLite Inspector", enabled: false, transport: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-sqlite"], env: {} },
+  ]
   const sessions = createInitialSessions()
   const stoppedSessions = new Set<string>()
   const showcaseTerminals = [
@@ -710,6 +715,26 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
       }
       case "providerList":
         return structuredClone(providerState) as unknown as T
+      case "mcpServerList":
+        return { revision: "rev-mcp-1", servers: structuredClone(mcpServers) } as unknown as T
+      case "mcpServerCreate": {
+        const input = record.server as Record<string, unknown>
+        const created = { ...input, id: `mcp-${Date.now()}` } as (typeof mcpServers)[number]
+        mcpServers.push(created)
+        return structuredClone(created) as unknown as T
+      }
+      case "mcpServerUpdate": {
+        const target = mcpServers.find(item => item.id === record.serverId)
+        if (target && record.changes && typeof record.changes === "object") {
+          Object.assign(target, record.changes)
+        }
+        return structuredClone(target ?? mcpServers[0]!) as unknown as T
+      }
+      case "mcpServerRemove": {
+        const index = mcpServers.findIndex(item => item.id === record.serverId)
+        if (index >= 0) mcpServers.splice(index, 1)
+        return null as unknown as T
+      }
       case "providerCreate": {
         const input = record.provider as AgentProviderInput
         const created: AgentProviderConfig = { ...input, id: `${input.template}-${Date.now()}` }

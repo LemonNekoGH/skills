@@ -114,9 +114,9 @@ export function createDevShowcaseSnapshot(): AgentSnapshot {
     archiveState: "active",
     capabilities: { steering: true, resume: true, fork: true, additionalDirectories: true },
     configuration: createDevShowcaseConfiguration("claude-code"),
-    lastEventSeq: "18",
+    lastEventSeq: "19",
     lastCompletedSeq: "16",
-    lastReadSeq: "18",
+    lastReadSeq: "19",
     createdAt: "2026-04-12T10:00:00.000Z",
     updatedAt: turnStartedAt,
   }
@@ -519,6 +519,47 @@ export function createDevShowcaseEvents(snapshot = createDevShowcaseSnapshot()):
       createdAt: "2026-04-12T10:17:10.000Z",
       payload: permission,
     },
+    acpUpdate(19, "2026-04-12T10:17:18.000Z", {
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-remote-mcp-screenshot",
+      title: "mcp.deskfleet.deskfleet_remote_mcp_call",
+      kind: "other",
+      status: "completed",
+      rawInput: {
+        server: "deskfleet",
+        tool: "deskfleet_remote_mcp_call",
+        arguments: {
+          machineId: DEV_SHOWCASE_REMOTE_MACHINE_ID,
+          serverId: "auv",
+          name: "artifact_read_image",
+          arguments: {
+            run_id: "capture-run-412",
+            artifact_id: "staging-dashboard",
+          },
+        },
+      },
+      rawOutput: {
+        result: {
+          content: [
+            {
+              type: "image",
+              mimeType: "image/svg+xml",
+              data: SHOWCASE_SVG_BASE64,
+            },
+          ],
+        },
+        error: null,
+      },
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "Captured staging dashboard screenshot from Build Runner us-east (480×220).",
+          },
+        },
+      ],
+    }),
   ]
 }
 
