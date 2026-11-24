@@ -336,11 +336,43 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
           state.snapshot.session.titleCustomized = true
         }
         return structuredClone((state ?? sessions.get(DEV_SHOWCASE_SESSION_ID)!).snapshot)
-      case "_deskfleet/session/yolo":
-        if (state && typeof params.enabled === "boolean") {
-          state.snapshot.session.yolo = params.enabled
+      case "_deskfleet/session/yolo": {
+        if (!state) throw new Error(`Unknown showcase session: ${sessionId}`)
+        if (typeof params.enabled !== "boolean") throw new Error("Invalid YOLO flag")
+        const now = new Date().toISOString()
+        const actor = { kind: "user" as const, userId: "user-ada" }
+        state.snapshot.session.yolo = params.enabled
+        state.snapshot.session.yoloActor = params.enabled ? actor : undefined
+        state.snapshot.session.updatedAt = now
+        appendSessionEvent(state, {
+          sessionId,
+          kind: "session",
+          createdAt: now,
+          payload: structuredClone(state.snapshot.session),
+        })
+        if (params.enabled) {
+          for (const permission of state.snapshot.permissions) {
+            if (permission.state !== "pending") continue
+            const option = permission.request.options.find(item => item.kind === "allow_always")
+              ?? permission.request.options.find(item => item.kind === "allow_once")
+              ?? permission.request.options[0]
+            if (!option) continue
+            permission.state = "resolved"
+            permission.optionId = option.optionId
+            permission.resolvedAt = now
+            appendSessionEvent(state, {
+              sessionId,
+              kind: "permission",
+              turnId: permission.turnId,
+              runGeneration: permission.runGeneration,
+              createdAt: now,
+              payload: structuredClone(permission),
+            })
+          }
         }
-        return structuredClone((state ?? sessions.get(DEV_SHOWCASE_SESSION_ID)!).snapshot)
+        emitCentral({ type: "catalogChanged", teamId: DEV_SHOWCASE_TEAM_ID, machineId, sessionId })
+        return structuredClone(state.snapshot)
+      }
       case "_deskfleet/session/archive":
         if (state) state.snapshot.session.archiveState = "archived"
         return structuredClone((state ?? sessions.get(DEV_SHOWCASE_SESSION_ID)!).snapshot)

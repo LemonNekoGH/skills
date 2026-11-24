@@ -637,6 +637,7 @@ function createCompletedStubSnapshot(options: {
   providerSessionId: string
   title: string
   archiveState: "active" | "archived"
+  yolo?: boolean
   prompt: string
   createdAt: string
   updatedAt: string
@@ -652,6 +653,7 @@ function createCompletedStubSnapshot(options: {
     providerSessionId: options.providerSessionId,
     title: options.title,
     context: "directory",
+    ...(options.yolo ? { yolo: true, yoloActor: { kind: "user", userId: "user-ada" } } : {}),
     lifecycle: "ready",
     archiveState: options.archiveState,
     capabilities: { steering: true, resume: true, fork: true, additionalDirectories: true },
@@ -726,6 +728,7 @@ export function createDevShowcaseRemoteSnapshot(): AgentSnapshot {
     providerSessionId: "prov-sess-remote",
     title: "Verify Linux x86_64 release artifacts",
     archiveState: "active",
+    yolo: true,
     prompt: "Check cargo build --release artifacts on the runner.",
     createdAt: "2026-04-12T08:00:00.000Z",
     updatedAt: "2026-04-12T08:05:00.000Z",
