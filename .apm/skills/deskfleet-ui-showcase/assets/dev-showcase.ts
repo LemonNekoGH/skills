@@ -9,6 +9,7 @@ import type { CentralApi, CentralEvent, Machine, Team } from "@deskfleet-repo/pa
 import type { DeskfleetDesktopApi } from "@deskfleet-repo/packages/client/src/desktop-api.ts"
 import { DEFAULT_LOCALE } from "@deskfleet-repo/packages/client/src/i18n.ts"
 import type { LocalChannelEvent, LocalChannelOpen, LocalChannelsApi } from "@deskfleet-repo/packages/client/src/local-channels.ts"
+import type { SpeechApi, SpeechEvent } from "@deskfleet-repo/packages/client/src/speech.ts"
 import {
   createDevShowcaseArchivedSnapshot,
   createDevShowcaseConfiguration,
@@ -110,6 +111,62 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
 
   const centralListeners = new Set<(event: CentralEvent) => void>()
   const channelListeners = new Set<(event: LocalChannelEvent) => void>()
+  const speechListeners = new Set<(event: SpeechEvent) => void>()
+  const activeSpeech = new Map<string, ReturnType<typeof setInterval>>()
+  const emitSpeech = (event: SpeechEvent) => {
+    for (const listener of speechListeners) listener(event)
+  }
+  const speech: SpeechApi = {
+    async status() {
+      return { supported: true }
+    },
+    async start(request) {
+      const existing = activeSpeech.get(request.sessionId)
+      if (existing) clearInterval(existing)
+      emitSpeech({ sessionId: request.sessionId, type: "started" })
+      let step = 0
+      const timer = setInterval(() => {
+        step += 1
+        const level = 0.2 + 0.65 * Math.abs(Math.sin(step * 0.7))
+        emitSpeech({ sessionId: request.sessionId, type: "level", level })
+        if (step === 6) {
+          emitSpeech({
+            sessionId: request.sessionId,
+            type: "result",
+            text: "Check the composer icon alignment in dark and light themes.",
+            final: false,
+          })
+        }
+      }, 120)
+      activeSpeech.set(request.sessionId, timer)
+    },
+    async stop(sessionId) {
+      const timer = activeSpeech.get(sessionId)
+      if (timer) {
+        clearInterval(timer)
+        activeSpeech.delete(sessionId)
+      }
+      emitSpeech({
+        sessionId,
+        type: "result",
+        text: "Check the composer icon alignment in dark and light themes.",
+        final: true,
+      })
+      emitSpeech({ sessionId, type: "ended" })
+    },
+    async cancel(sessionId) {
+      const timer = activeSpeech.get(sessionId)
+      if (timer) {
+        clearInterval(timer)
+        activeSpeech.delete(sessionId)
+      }
+      emitSpeech({ sessionId, type: "ended" })
+    },
+    onEvent(listener) {
+      speechListeners.add(listener)
+      return () => { speechListeners.delete(listener) }
+    },
+  }
   const openChannels = new Map<string, LocalChannelOpen & { buffer: string }>()
   const teams = structuredClone(DEV_SHOWCASE_TEAMS)
   const machines = structuredClone(DEV_SHOWCASE_MACHINES)
@@ -1180,6 +1237,7 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
     central,
     localChannels: channels,
     muxChannels: channels,
+    ...((base?.platform ?? "darwin") === "darwin" || base?.platform === "win32" ? { speech: base?.speech ?? speech } : {}),
     onboarding: {
       get: async () => ({ step: "complete", permissionSteps: [] }),
       permissions: async () => ({}),
