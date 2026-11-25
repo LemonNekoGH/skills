@@ -47,7 +47,7 @@ Open the printed URLs with `agent-browser` or a desktop browser:
      - `other` (`tool-mcp-query`): Completed MCP `sqlite.query` call.
      - `execute` (`tool-failed-probe`): Failed command (`status: "failed"`).
    - **Media Blocks**: Inline SVG `image` preview and playable WAV `audio` block.
-   - **Assistant Rich Text**: Heading, bullet list, GFM table, and syntax-highlighted TypeScript code block.
+   - **Assistant Rich Text**: Heading, bullet list, clickable Markdown file preview link (`docs/guide/preview-guide.md` with relative `./architecture.svg` and `../api.md` fixtures resolved via `basePath`), GFM table, and syntax-highlighted TypeScript code block.
    - **Bottom Composer & Controls**:
      - Pending `Permission Request` card (`Allow once`, `Always allow in session`, `Reject` buttons work interactively).
      - Queued `AgentBacklog` input item (`Send now`, `Edit`, `Remove`).

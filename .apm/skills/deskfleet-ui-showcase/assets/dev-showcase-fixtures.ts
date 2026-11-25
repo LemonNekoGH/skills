@@ -39,6 +39,87 @@ const SHOWCASE_SVG_BASE64 = btoa(
 // Minimal valid 1-sample 8kHz mono PCM WAV header + sample (46 bytes) for the audio player block.
 const SHOWCASE_WAV_BASE64 = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAA="
 
+const SHOWCASE_ARCHITECTURE_SVG = [
+  `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="160" viewBox="0 0 600 160" fill="none">`,
+  `<rect width="600" height="160" rx="14" fill="#0F172A"/>`,
+  `<rect x="20" y="42" width="148" height="76" rx="10" fill="#1E293B" stroke="#38BDF8" stroke-width="1.5"/>`,
+  `<text x="94" y="75" fill="#F8FAFC" font-family="system-ui,sans-serif" font-size="13" font-weight="600" text-anchor="middle">Resource Viewer</text>`,
+  `<text x="94" y="96" fill="#94A3B8" font-family="ui-monospace,monospace" font-size="11" text-anchor="middle">preview-guide.md</text>`,
+  `<path d="M168 80 H224" stroke="#60A5FA" stroke-width="2" stroke-linecap="round"/>`,
+  `<polygon points="224,75 234,80 224,85" fill="#60A5FA"/>`,
+  `<rect x="234" y="42" width="152" height="76" rx="10" fill="#1E293B" stroke="#818CF8" stroke-width="1.5"/>`,
+  `<text x="310" y="75" fill="#F8FAFC" font-family="system-ui,sans-serif" font-size="13" font-weight="600" text-anchor="middle">File RPC</text>`,
+  `<text x="310" y="96" fill="#A5B4FC" font-family="ui-monospace,monospace" font-size="11" text-anchor="middle">uri + basePath</text>`,
+  `<path d="M386 80 H442" stroke="#34D399" stroke-width="2" stroke-linecap="round"/>`,
+  `<polygon points="442,75 452,80 442,85" fill="#34D399"/>`,
+  `<rect x="452" y="42" width="128" height="76" rx="10" fill="#1E293B" stroke="#34D399" stroke-width="1.5"/>`,
+  `<text x="516" y="75" fill="#F8FAFC" font-family="system-ui,sans-serif" font-size="13" font-weight="600" text-anchor="middle">Target Machine</text>`,
+  `<text x="516" y="96" fill="#6EE7B7" font-family="ui-monospace,monospace" font-size="11" text-anchor="middle">dirname + resolve</text>`,
+  `</svg>`,
+].join("")
+
+export interface DevShowcaseVirtualFile {
+  path: string
+  name: string
+  mimeType: string
+  content: string
+}
+
+export const DEV_SHOWCASE_VIRTUAL_FILES: Record<string, DevShowcaseVirtualFile> = {
+  "/workspace/deskfleet/docs/guide/preview-guide.md": {
+    path: "/workspace/deskfleet/docs/guide/preview-guide.md",
+    name: "preview-guide.md",
+    mimeType: "text/markdown",
+    content: [
+      "# File Preview Architecture",
+      "",
+      "DeskFleet opens Markdown files in **source view** by default and lets you toggle rendered preview from the top bar.",
+      "",
+      "![Preview pipeline](./architecture.svg)",
+      "",
+      "Relative images and links resolve on the target machine via `basePath`. See [Resolve API Notes](../api.md) for protocol details.",
+      "",
+      "| Format | Default View | Relative Assets |",
+      "| :--- | :--- | :--- |",
+      "| Markdown (`.md`) | Highlighted Source | Resolved via `basePath` |",
+      "| HTML (`.html`) | Highlighted Source | Sandboxed `iframe` |",
+      "",
+    ].join("\n"),
+  },
+  "/workspace/deskfleet/docs/guide/architecture.svg": {
+    path: "/workspace/deskfleet/docs/guide/architecture.svg",
+    name: "architecture.svg",
+    mimeType: "image/svg+xml",
+    content: SHOWCASE_ARCHITECTURE_SVG,
+  },
+  "/workspace/deskfleet/docs/api.md": {
+    path: "/workspace/deskfleet/docs/api.md",
+    name: "api.md",
+    mimeType: "text/markdown",
+    content: [
+      "# Resource Resolve API",
+      "",
+      "The target machine resolves relative URIs against `dirname(basePath)` using native filesystem path rules:",
+      "",
+      "```ts",
+      "resolve: { params: { sessionId: string; uri: string; basePath?: string }; result: FileEntry }",
+      "```",
+      "",
+    ].join("\n"),
+  },
+  "/workspace/deskfleet/packages/components/src/views/SessionView.vue": {
+    path: "/workspace/deskfleet/packages/components/src/views/SessionView.vue",
+    name: "SessionView.vue",
+    mimeType: "text/plain",
+    content: [
+      "<script setup lang=\"ts\">",
+      "const props = defineProps<{ sessionId: string }>()",
+      "</script>",
+      "",
+    ].join("\n"),
+  },
+}
+
 export const DEV_SHOWCASE_TERMINAL_OUTPUT = [
   "$ pnpm --filter @deskfleet/desktop typecheck\r\n",
   "\u001B[36m> @deskfleet/desktop@0.13.0 typecheck\u001B[0m\r\n",
@@ -476,6 +557,7 @@ export function createDevShowcaseEvents(snapshot = createDevShowcaseSnapshot()):
           "- **Plan & Reasoning**: Live 3-step `AgentPlan` (`completed`, `in_progress`, `pending`) and collapsible reasoning.",
           "- **Tool Calls & Diff**: Terminal output (`execute`), file diff with `+18 -4` badge (`edit`), `search`, `mcp`, and `failed` status.",
           "- **Media & Rich Text**: Inline SVG image preview, WAV audio player, GFM table, and syntax-highlighted code.",
+          "- **Document Previews**: Open [docs/guide/preview-guide.md](docs/guide/preview-guide.md) to inspect source view, rendered Markdown, and relative assets.",
           "",
           "| Surface Area | Fixture ID | Status | Highlights |",
           "| :--- | :--- | :--- | :--- |",

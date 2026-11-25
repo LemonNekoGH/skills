@@ -1,6 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk/unstable"
 import { agentComposerCatalog, agentConfiguration, type AgentConfiguration } from "@deskfleet-repo/packages/protocol/src/agent-configuration.ts"
-import type { AgentEvent, AgentInput, AgentReceipt, AgentSnapshot } from "@deskfleet-repo/packages/protocol/src/agent.ts"
+import { AGENT_CHUNK_BYTES, type AgentEvent, type AgentInput, type AgentReceipt, type AgentSnapshot } from "@deskfleet-repo/packages/protocol/src/agent.ts"
 import type { CatalogSnapshot } from "@deskfleet-repo/packages/protocol/src/catalog.ts"
 import type { GitDiffRequest } from "@deskfleet-repo/packages/protocol/src/git.ts"
 import type { AgentProviderConfig, AgentProviderInput, AgentProviderSettings, ProviderSnapshot } from "@deskfleet-repo/packages/protocol/src/provider.ts"
@@ -43,9 +43,30 @@ import {
   DEV_SHOWCASE_TEAM_ID,
   DEV_SHOWCASE_TEAMS,
   DEV_SHOWCASE_TERMINAL_OUTPUT,
+  DEV_SHOWCASE_VIRTUAL_FILES,
+  type DevShowcaseVirtualFile,
 } from "./dev-showcase-fixtures.ts"
 
 export * from "./dev-showcase-fixtures.ts"
+
+function normalizeShowcasePath(baseDir: string, relativePath: string): string {
+  const combined = relativePath.startsWith("/") ? relativePath : `${baseDir}/${relativePath}`
+  const parts: string[] = []
+  for (const part of combined.split("/")) {
+    if (!part || part === ".") continue
+    if (part === "..") parts.pop()
+    else parts.push(part)
+  }
+  return `/${parts.join("/")}`
+}
+
+function resolveShowcaseVirtualFile(uri: string, basePath?: string): DevShowcaseVirtualFile | undefined {
+  const withoutHash = uri.split("#", 1)[0] ?? ""
+  const withoutLine = withoutHash.replace(/:[1-9]\d*(?::[1-9]\d*)?$/u, "")
+  const rawPath = withoutLine.startsWith("file://") ? decodeURIComponent(withoutLine.slice("file://".length)) : decodeURIComponent(withoutLine)
+  const baseDir = basePath ? basePath.replace(/\/[^/]*$/u, "") || "/" : "/workspace/deskfleet"
+  return DEV_SHOWCASE_VIRTUAL_FILES[normalizeShowcasePath(baseDir, rawPath)]
+}
 
 interface SessionRecordState {
   machineId: string
@@ -190,7 +211,10 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
   }
   const emitChannelMessage = (connectionId: string, payload: unknown) => {
     const bytes = new TextEncoder().encode(`${JSON.stringify(payload)}\n`)
-    for (const listener of channelListeners) listener({ connectionId, kind: "message", data: bytes })
+    for (let offset = 0; offset < bytes.byteLength; offset += AGENT_CHUNK_BYTES) {
+      const chunk = bytes.slice(offset, offset + AGENT_CHUNK_BYTES)
+      for (const listener of channelListeners) listener({ connectionId, kind: "message", data: chunk })
+    }
   }
   const broadcastAgentNotification = (machineId: string, method: string, params: unknown) => {
     for (const [connectionId, channel] of openChannels) {
@@ -1336,18 +1360,37 @@ export function createDevShowcaseDesktopApi(base?: Partial<DeskfleetDesktopApi>)
       cancel: async () => {},
       retry: async () => {},
       onChanged: () => () => {},
-      resolveResource: async () => ({
-        path: "/workspace/deskfleet/ScreenRecording_11-11.mp4",
-        name: "ScreenRecording_11-11.mp4",
-        kind: "file" as const,
-        size: 69_206_016,
-        modifiedAt: Date.now(),
-      }),
-      readResource: async request => ({
-        name: request.uri.split("/").pop() || "resource",
-        mimeType: "text/plain",
-        data: new Uint8Array(),
-      }),
+      resolveResource: async request => {
+        const resolved = resolveShowcaseVirtualFile(request.uri, request.basePath)
+        if (resolved) {
+          const data = new TextEncoder().encode(resolved.content)
+          return {
+            path: resolved.path,
+            name: resolved.name,
+            kind: "file" as const,
+            size: data.byteLength,
+            modifiedAt: Date.now(),
+          }
+        }
+        return {
+          path: "/workspace/deskfleet/ScreenRecording_11-11.mp4",
+          name: "ScreenRecording_11-11.mp4",
+          kind: "file" as const,
+          size: 69_206_016,
+          modifiedAt: Date.now(),
+        }
+      },
+      readResource: async request => {
+        const resolved = resolveShowcaseVirtualFile(request.uri, request.basePath)
+        if (resolved) {
+          return {
+            name: resolved.name,
+            mimeType: resolved.mimeType,
+            data: new TextEncoder().encode(resolved.content),
+          }
+        }
+        throw new Error(`Showcase resource not found: ${request.uri}`)
+      },
       saveResource: async () => null,
       uploadAttachment: async (
         request: { sessionId?: string; draftId?: string; name: string; data: Uint8Array },
